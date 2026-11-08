@@ -11,7 +11,7 @@ import {
 import { cleanUrl } from "../../utils/format.js";
 import { Quality, toResolution } from "../../utils/info.js";
 import { Logger } from "../../utils/logger.js";
-import { getMediaflowproxyTranscodeUrl } from "../../utils/mediaflowproxy.js";
+//import { getMediaflowproxyTranscodeUrl } from "../../utils/mediaflowproxy.js";
 import { getTorboxStreamUrl } from "../debrid/torbox.js";
 import { Provider } from "../provider.js";
 import { getPixeldrainDownloadUrl } from "./pixeldrain.js";
@@ -155,10 +155,9 @@ export async function getHosterDownloadUrl(url: string, config: UserConfig) {
       return getPixeldrainDownloadUrl(url);
     case Hoster.SEND:
       if (config.mfpUrl) {
-        const streamUrl = await getSendDownloadUrl(url, config);
-        return getMediaflowproxyTranscodeUrl(streamUrl, config);
-      }
-      return "";
+        return getSendDownloadUrl(url, config);
+    }
+    return "";
     case Hoster.GOFILE:
       return "";
     case Hoster.MEGA:
