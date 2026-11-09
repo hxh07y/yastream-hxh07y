@@ -254,23 +254,18 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
     season?: number,
   ): Promise<MkvdramaSearch | null> {
     const extractedTitle = extractTitle(title);
-    const url = `${this.baseUrl}/search?q=${extractedTitle.title}`;
-    this.logger.log(`GET search | ${url}`);
-    const response = await this._fetchDirectAndFlareSolverr(url);
-    if (!response) return null;
+    const url = new URL("/search", this.baseUrl);
+    url.searchParams.set("q", extractedTitle.title);
+    this.logger.log(`GET search | ${url.toString()}`);
 
-    const data =
-      typeof response === "string"
-        ? response
-        : response.solution?.response || "";
-
+    // Search directly; do not depend on FlareSolverr for title matching.
+    const data = await this._fetchDirect(url.toString());
     if (!data) return null;
 
     const searches = this.parseSearch(data);
     const match = matchTitle(searches, title, year, season);
     if (!match[0]) return null;
-    const matchDetail = match[0];
-    return matchDetail;
+    return match[0];
   }
 
   async getSubtitles(content: ContentDetail): Promise<Subtitle[]> {
@@ -710,7 +705,8 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
 
   async _fetchDirect(url: string): Promise<string | null> {
     try {
-      const response = await axiosGet<string>(url, { headers: this.headers });
+      // axiosGet selects the MKVDrama-specific client with HTML headers.
+      const response = await axiosGet<string>(url);
       if (
         response &&
         !response.includes("cloudflare") &&
