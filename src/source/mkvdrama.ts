@@ -256,7 +256,14 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
     const extractedTitle = extractTitle(title);
     const url = `${this.baseUrl}/search?q=${extractedTitle.title}`;
     this.logger.log(`GET search | ${url}`);
-    const data = await axiosGet<string>(url);
+    const response = await this._fetchDirectAndFlareSolverr(url);
+    if (!response) return null;
+
+    const data =
+      typeof response === "string"
+        ? response
+        : response.solution?.response || "";
+
     if (!data) return null;
 
     const searches = this.parseSearch(data);
