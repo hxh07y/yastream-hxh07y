@@ -245,6 +245,12 @@ export async function axiosGet<T>(
         lastError = error;
         const errorStatus =
           error instanceof AxiosError && error.response?.status;
+        if (http === mkvdramaClient && error instanceof AxiosError) {
+          const responseHeaders = error.response?.headers;
+          logger.warn(
+            `MKVDrama request rejected | status=${errorStatus ?? "no-response"} | code=${error.code ?? "unknown"} | server=${responseHeaders?.["server"] ?? "unknown"} | cf-ray=${responseHeaders?.["cf-ray"] ?? "none"} | cf-mitigated=${responseHeaders?.["cf-mitigated"] ?? "none"} | retry-after=${responseHeaders?.["retry-after"] ?? "none"}`,
+          );
+        }
         isRateLimit =
           errorStatus === HttpStatusCode.TooManyRequests ||
           errorStatus === HttpStatusCode.UnavailableForLegalReasons ||
