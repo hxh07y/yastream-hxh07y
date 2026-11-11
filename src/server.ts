@@ -37,63 +37,6 @@ app.route(`/${API}`, api);
 app.route("/", publicRouter);
 app.route("/dashboard", dashboard);
 
-// Temporary, read-only MKVDrama connectivity diagnostic for the test service.
-// It makes one fixed POST request and returns status/shape only, never response data.
-app.get("/__diagnostics/mkvdrama", async (c) => {
-  const target =
-    "https://mkvdrama.net/exrwfabz8n/_vb3k_mnxr_w";
-  try {
-    const response = await fetch(target, {
-      method: "POST",
-      headers: {
-        Accept: "application/json",
-        Referer: "https://mkvdrama.net/exrwfabz8n",
-      },
-      signal: AbortSignal.timeout(12000),
-    });
-    const contentType = response.headers.get("content-type") || "";
-    const cfMitigated = response.headers.get("cf-mitigated") || "";
-    const body = await response.text();
-    let jsonKeys: string[] = [];
-    let isJson = false;
-    try {
-      const parsed: unknown = JSON.parse(body);
-      isJson = true;
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        jsonKeys = Object.keys(parsed as Record<string, unknown>).sort();
-      }
-    } catch {
-      // The response is not JSON; do not expose its body.
-    }
-    return c.json({
-      targetHost: "mkvdrama.net",
-      method: "POST",
-      status: response.status,
-      contentType,
-      cfMitigated: cfMitigated || null,
-      cloudflareChallenge:
-        cfMitigated.toLowerCase() === "challenge" ||
-        body.toLowerCase().includes("just a moment"),
-      isJson,
-      jsonKeys,
-      expectedFieldsPresent:
-        ["hash", "pass_path", "dec_key"].every((key) =>
-          jsonKeys.includes(key),
-        ),
-    });
-  } catch (error) {
-    return c.json(
-      {
-        targetHost: "mkvdrama.net",
-        method: "POST",
-        error:
-          error instanceof Error ? error.name : "RequestFailed",
-      },
-      502,
-    );
-  }
-});
-
 // Error handling
 app.onError((err, c) => {
   logger.error(`${err}`);
