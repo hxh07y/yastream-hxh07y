@@ -6,6 +6,7 @@ import {
   ManifestCatalog,
   ManifestExtra,
 } from "@stremio-addon/sdk";
+import { ENV } from "../utils/env.js";
 // @ts-ignore - JSON import for package.json
 import pkg from "../../package.json" with { type: "json" };
 import { Provider } from "../source/provider.js";
@@ -87,7 +88,7 @@ function buildCatalogMap(catalogs: string[] = defaultCatalogs) {
     const manifestCatalog: ManifestCatalog = {
       id: catalogId,
       type: type as ContentType,
-      name: `[${pkg.name}] ${prefix} ${name}`,
+      name: `[${ENV.DISPLAY_NAME}] ${prefix} ${name}`,
       extra: extra,
     };
     return manifestCatalog;
@@ -116,7 +117,7 @@ const baseManifest: Manifest = {
     // Prefix.MKVDRAMA,
   ],
   types: ["movie", "series"],
-  name: pkg.name,
+  name: ENV.DISPLAY_NAME,
   description: pkg.description,
   behaviorHints: {
     adult: false,
