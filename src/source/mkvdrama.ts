@@ -446,7 +446,7 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
       }
 
       const episodes = [...episodeByNumber.values()].sort(
-        (a, b) => a.episode - b.episode,
+        (a, b) => (a.episode ?? 0) - (b.episode ?? 0),
       );
 
       // Extract password from admin comment (first moderator comment)
