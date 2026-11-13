@@ -264,6 +264,9 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
 
     const searches = this.parseSearch(data);
     const match = matchTitle(searches, title, year, season);
+    this.logger.log(
+      `Search parsed | candidates=${searches.length} | matched=${Boolean(match[0])}`,
+    );
     if (!match[0]) return null;
     return match[0];
   }
@@ -742,13 +745,31 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
     try {
       // axiosGet selects the MKVDrama-specific client with HTML headers.
       const response = await axiosGet<string>(url);
-      if (
-        response &&
-        !response.includes("cloudflare") &&
-        !response.includes("Checking your browser")
-      ) {
-        return response;
+      if (!response) {
+        this.logger.warn("Direct fetch returned no response body; see AXIOS diagnostics");
+        return null;
       }
+      const lower = response.toLowerCase();
+      const challengeMarkers = [
+        "cf-chl-",
+        "challenge-platform",
+        "just a moment",
+        "checking your browser",
+        "verify you are human",
+      ];
+      const challenge = challengeMarkers.some((marker) =>
+        lower.includes(marker),
+      );
+      const pageTitle =
+        response.match(/<title[^>]*>([\\s\\S]*?)<\\/title>/i)?.[1]
+          ?.replace(/<[^>]+>/g, "")
+          .trim()
+          .slice(0, 100) || "no title";
+      this.logger.log(
+        `Direct fetch inspected | bytes=${Buffer.byteLength(response)} | challenge=${challenge} | title=${pageTitle}`,
+      );
+      if (challenge || lower.includes("cloudflare")) return null;
+      return response;
     } catch (error) {
       this.logger.warn(`Axios request failed: ${error}`);
     }
