@@ -372,7 +372,7 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
       for (const qualityBlock of qualityBlocks) {
         const $qualityBlock = $(qualityBlock);
         const h3Text = $qualityBlock.find("h3").text().trim();
-        const titleMatch = h3Text.match(/Episode\s+(\\d+)\s*-\s*(\\d+)/i);
+        const titleMatch = h3Text.match(/Episode\s+(\d+)\s*-\s*(\d+)/i);
         const rangeLinks: { link: string; quality: string }[] = [];
 
         $qualityBlock.find("div.soraurlx").each((_, linkBlock) => {
