@@ -3,6 +3,7 @@ import { StreamInsert } from "../../db/schema/stream.js";
 import { UserConfig } from "../../lib/manifest.js";
 import { TTL_MS } from "../../utils/cache.js";
 import {
+  FILEDITCH_HOST,
   GOFILE_HOST,
   MEGA_HOST,
   PIXELDRAIN_HOST,
@@ -31,6 +32,7 @@ export const enum Hoster {
   PIXELDRAIN = "pixeldrain",
   GOFILE = "gofile",
   SEND = "send",
+  FILEDITCH = "fileditch",
   MEGA = "mega",
   VIKING = "viking",
 }
@@ -39,6 +41,7 @@ export function filterHosterUrlsFromUrls(urls: string[]) {
   let pixeldrainUrls: string[] = [];
   let gofileUrls: string[] = [];
   let sendUrls: string[] = [];
+  let fileditchUrls: string[] = [];
   let megaUrls: string[] = [];
   let vikingUrls: string[] = [];
   urls.forEach((url) => {
@@ -58,6 +61,9 @@ export function filterHosterUrlsFromUrls(urls: string[]) {
       case matchesAnyHost(url, SEND_HOSTS):
         sendUrls.push(cleanUrl(url));
         break;
+      case matchesHost(url, FILEDITCH_HOST):
+        fileditchUrls.push(cleanUrl(url));
+        break;
       default:
         break;
     }
@@ -67,7 +73,8 @@ export function filterHosterUrlsFromUrls(urls: string[]) {
   logger.log(`MEGA ${megaUrls.length}`);
   logger.log(`VIKING ${vikingUrls.length}`);
   logger.log(`SEND ${sendUrls.length}`);
-  return { pixeldrainUrls, gofileUrls, megaUrls, vikingUrls, sendUrls };
+  logger.log(`FILEDITCH ${fileditchUrls.length}`);
+  return { pixeldrainUrls, gofileUrls, megaUrls, vikingUrls, sendUrls, fileditchUrls };
 }
 
 export function hosterToStream(
@@ -79,7 +86,7 @@ export function hosterToStream(
   externalId: string,
   season: string,
 ) {
-  const { pixeldrainUrls, gofileUrls, megaUrls, vikingUrls, sendUrls } =
+  const { pixeldrainUrls, gofileUrls, megaUrls, vikingUrls, sendUrls, fileditchUrls } =
     filterHosterUrlsFromUrls(urls.flat());
   const streamRows = episodes
     .map((episode) => {
@@ -102,9 +109,14 @@ export function hosterToStream(
           case Hoster.SEND:
             url = sendUrls.shift()!;
             break;
+          case Hoster.FILEDITCH:
+            url = fileditchUrls.shift()!;
+            break;
           default:
             break;
         }
+        // Avoid persisting an empty stream when a source URL is unavailable.
+        if (!url) return undefined;
         const size = hosterData.size.toString();
         const streamResolution = toResolution(quality);
         const resolution = `${streamResolution.width}x${streamResolution.height}`;
@@ -140,6 +152,9 @@ export function getHosterFromUrl(url: string) {
       return Hoster.VIKING;
     case matchesAnyHost(url, SEND_HOSTS):
       return Hoster.SEND;
+    case url.toLowerCase() === "fileditchfiles":
+    case matchesHost(url, FILEDITCH_HOST):
+      return Hoster.FILEDITCH;
     default:
       return null;
   }
@@ -156,8 +171,10 @@ export async function getHosterDownloadUrl(url: string, config: UserConfig) {
     case Hoster.SEND:
       if (config.mfpUrl) {
         return getSendDownloadUrl(url, config);
-    }
-    return "";
+      }
+      return "";
+    case Hoster.FILEDITCH:
+      return url;
     case Hoster.GOFILE:
       return "";
     case Hoster.MEGA:
