@@ -416,7 +416,7 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
       }
 
       const season = 1;
-      const preferredQualities = ["1080pHD", "1080p", "2160p"];
+      const preferredQualities = ["2160p", "1080pHD", "1080p"];
       const episodeByNumber = new Map<number, MetaVideo>();
 
       for (const range of episodeRanges) {
