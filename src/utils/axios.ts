@@ -235,6 +235,11 @@ export async function axiosGet<T>(
           signal: controller.signal as any,
         };
         const response = await http.get(url, axiosConfig);
+        if (http === mkvdramaClient) {
+          logger.log(
+            `MKVDrama response | status=${response.status} | content-type=${response.headers["content-type"] ?? "unknown"} | bytes=${typeof response.data === "string" ? Buffer.byteLength(response.data) : "non-text"}`,
+          );
+        }
         clearTimeout(timeoutId);
         const data = response.data;
         if (cacheClients.includes(http)) {
