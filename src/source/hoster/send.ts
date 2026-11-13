@@ -22,7 +22,9 @@ export async function getSendDownloadUrl(url: string, config: UserConfig) {
   // https://send.now/y52ejnt1f6bb -> https://dl9750.usercdn.com/d/nryutd7t6cosj4l4kzru5thb27ghmr27e5n53y7cu4kzpeo7vu3b56f6qv4ha7pdf3scxdy4/The.Scarecrow.S01E02.1080p.TVING.WEB-DL.AAC2.0.H.264-Marco.mkv
   const id = new URL(url).pathname.split("/").pop();
   const postData = `op=download2&id=${id}&rand=&referer=&download_a=CONTINUE`;
-  const streamUrl = await postRedirectedUrlCDP(`${SEND_ORIGIN}/`, postData);
+  // Keep the form submission on the same host as the supplied share URL.
+  const sendOrigin = new URL(url).origin;
+  const streamUrl = await postRedirectedUrlCDP(`${sendOrigin}/`, postData);
   const proxyUrl = getMediaflowproxyTranscodeUrl(streamUrl, config);
   return proxyUrl;
 }
