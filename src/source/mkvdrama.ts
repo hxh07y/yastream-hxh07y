@@ -761,7 +761,7 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
         lower.includes(marker),
       );
       const pageTitle =
-        response.match(/<title[^>]*>([\\s\\S]*?)<\\/title>/i)?.[1]
+        response.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1]
           ?.replace(/<[^>]+>/g, "")
           .trim()
           .slice(0, 100) || "no title";
