@@ -363,57 +363,92 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
       };
       const qualityBlocks = $("div.soraddlx").toArray();
       const ouoRedirectLinks: { link: string; quality: string }[] = [];
-      let minEpisode = 0;
-      let maxEpisode = 0;
+      const episodeRanges: {
+        minEpisode: number;
+        maxEpisode: number;
+        links: { link: string; quality: string }[];
+      }[] = [];
+
       for (const qualityBlock of qualityBlocks) {
         const $qualityBlock = $(qualityBlock);
-        const h3Text: string = $qualityBlock.find("h3").text() || "";
-        const titleMatch = h3Text.match(/Episode\s+(\d+)\s*-\s*(\d+)/i);
-        if (titleMatch) {
-          minEpisode = parseInt(titleMatch[1]!, 10);
-          maxEpisode = parseInt(titleMatch[2]!, 10);
-        }
-        const linkBlocks = $qualityBlock.find("div.soraurlx").toArray();
-        if (linkBlocks.length === 0) continue;
-        linkBlocks.forEach((linkBlock) => {
-          const $link = $(linkBlock);
-          const links = $link.find("a").toArray();
-          const $quality = $link.find("strong");
-          links.forEach((link) => {
-            const $link = $(link);
-            const ouoRedirectLink: string = $link.attr("href") || "";
-            const quality: string = $quality.text();
-            if ($link.text().trim().includes("Link 1") && quality) {
-              this.logger.log(
-                `ouoRedirectLink ${ouoRedirectLink}, quality ${quality}`,
-              );
-              ouoRedirectLinks.push({ link: ouoRedirectLink, quality });
+        const h3Text = $qualityBlock.find("h3").text().trim();
+        const titleMatch = h3Text.match(/Episode\\s+(\\d+)\\s*-\\s*(\\d+)/i);
+        const rangeLinks: { link: string; quality: string }[] = [];
+
+        $qualityBlock.find("div.soraurlx").each((_, linkBlock) => {
+          const $linkBlock = $(linkBlock);
+          const quality = $linkBlock.find("strong").first().text().trim();
+          if (!quality) return;
+
+          $linkBlock.find("a").each((_, anchor) => {
+            const $anchor = $(anchor);
+            const label = $anchor.text().trim();
+            const link = $anchor.attr("href") || "";
+            if (!link || !/^Link\\s*[12]$/i.test(label)) return;
+
+            const entry = { link, quality };
+            rangeLinks.push(entry);
+            if (!ouoRedirectLinks.some((existing) => existing.link === link)) {
+              ouoRedirectLinks.push(entry);
             }
+            this.logger.log(
+              `MKVDrama download link ${link}, quality ${quality}, ${label}`,
+            );
           });
         });
+
+        if (titleMatch) {
+          const minEpisode = parseInt(titleMatch[1]!, 10);
+          const maxEpisode = parseInt(titleMatch[2]!, 10);
+          if (
+            Number.isFinite(minEpisode) &&
+            Number.isFinite(maxEpisode) &&
+            minEpisode > 0 &&
+            maxEpisode >= minEpisode
+          ) {
+            episodeRanges.push({
+              minEpisode,
+              maxEpisode,
+              links: rangeLinks,
+            });
+          }
+        }
       }
+
       const season = 1;
-      const episodes: MetaVideo[] = [];
-      const highQualities = ["1080p", "1080pHD"];
-      for (let ep = minEpisode; ep <= maxEpisode; ep++) {
-        const ouoLink = ouoRedirectLinks.find((link) =>
-          highQualities.includes(link.quality),
+      const preferredQualities = ["1080pHD", "1080p", "2160p"];
+      const episodeByNumber = new Map<number, MetaVideo>();
+
+      for (const range of episodeRanges) {
+        const selectedQuality = preferredQualities.find((quality) =>
+          range.links.some((link) => link.quality === quality),
+        );
+        if (!selectedQuality) continue;
+
+        // Keep Link 1 as the episode metadata's primary link. Link 2 is also
+        // retained above so the stream job can try it as an alternate mirror.
+        const selectedLink = range.links.find(
+          (link) => link.quality === selectedQuality,
         )?.link;
-        if (!ouoLink) continue;
-        const title = ouoRedirectLinks.find((link) =>
-          highQualities.includes(link.quality),
-        )?.quality;
-        if (!title) continue;
-        const episode: MetaVideo = {
-          id: `${this.name}:${ouoLink}:${season}:${ep}`,
-          title: `${detail.name} ${highQualities}`,
-          episode: ep,
-          season: season,
-          overview: `${highQualities} Download`,
-          released: new Date(time).toISOString(),
-        };
-        episodes.push(episode);
+        if (!selectedLink) continue;
+
+        for (let ep = range.minEpisode; ep <= range.maxEpisode; ep++) {
+          if (episodeByNumber.has(ep)) continue;
+          episodeByNumber.set(ep, {
+            id: `${this.name}:${selectedLink}:${season}:${ep}`,
+            title: `${detail.name} ${selectedQuality}`,
+            episode: ep,
+            season,
+            overview: `${selectedQuality} Download`,
+            released: new Date(time).toISOString(),
+          });
+        }
       }
+
+      const episodes = [...episodeByNumber.values()].sort(
+        (a, b) => a.episode - b.episode,
+      );
+
       // Extract password from admin comment (first moderator comment)
       const password =
         $(".fe-role-badge--moderator")
