@@ -24,5 +24,6 @@ export const VIKING_HOST = "vikingfile.com";
 export const VIKING_ORIGIN = `https://${VIKING_HOST}`;
 export const PIXELDRAIN_HOST = "pixeldrain.com";
 export const PIXELDRAIN_ORIGIN = `https://${PIXELDRAIN_HOST}`;
+export const FILEDITCH_HOST = "fileditchfiles.st";
 export const MEGA_HOST = "mega.nz";
 export const MEGA_ORIGIN = `https://${MEGA_HOST}`;
