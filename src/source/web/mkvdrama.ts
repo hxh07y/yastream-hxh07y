@@ -34,7 +34,7 @@ async function getUrlsFromMkvdramaCDP(url: string) {
 
   try {
     const pages = await browser.pages();
-    let page = pages.find((candidate) => {
+    const matchingPages = pages.filter((candidate) => {
       try {
         const current = new URL(candidate.url());
         return current.hostname === target.hostname && current.pathname === target.pathname;
@@ -43,9 +43,24 @@ async function getUrlsFromMkvdramaCDP(url: string) {
       }
     });
 
+    // Prefer the tab where the host list has actually rendered. A second tab
+    // may still be showing a verification page for the same URL.
+    let page = undefined;
+    for (const candidate of matchingPages) {
+      const itemCount = await candidate
+        .$eval("li[data-i]", (items) => items.length)
+        .catch(() => 0);
+      if (itemCount > 0) {
+        page = candidate;
+        break;
+      }
+    }
+
     if (!page) {
       throw new MkvdramaError(
-        "MKVDrama host-list tab not found. Open the host-list link in SO7O, complete its human verification manually, wait for GET LINK, then retry.",
+        matchingPages.length
+          ? "The MKVDrama host-list page has no rendered links. Complete its human verification manually in SO7O, wait for GET LINK, then retry."
+          : "MKVDrama host-list tab not found. Open the host-list link in SO7O, complete its human verification manually, wait for GET LINK, then retry.",
       );
     }
 
