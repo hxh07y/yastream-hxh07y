@@ -382,9 +382,8 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
           await page
             .waitForSelector("div.soraddlx", { timeout: 20000 })
             .catch(() => null);
-          const downloadSectionCount = await page.$eval(
-            "div.soraddlx",
-            (elements) => elements.length,
+          const downloadSectionCount = await page.evaluate(
+            () => document.querySelectorAll("div.soraddlx").length,
           );
           this.logger.log(
             `MKVDrama detail DOM ready | downloadSections=${downloadSectionCount} | url=${page.url()}`,
