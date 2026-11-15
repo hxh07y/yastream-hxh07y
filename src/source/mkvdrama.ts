@@ -36,6 +36,7 @@ import {
 } from "../utils/browser/flaresolverr.js";
 import { getBrowser, getRedirectedUrlCDP } from "../utils/browser/puppeteer.js";
 import { cache, TTL_MS } from "../utils/cache.js";
+import { ENV } from "../utils/env.js";
 import {
   FILECRYPT_HOST,
   FILECRYPT_ORIGIN,
