@@ -35,7 +35,7 @@ import {
   FlareSolverrResponse,
   getFlareSolverr,
 } from "../utils/browser/flaresolverr.js";
-import { getBrowser, getRedirectedUrlCDP } from "../utils/browser/puppeteer.js";
+import { getBrowser } from "../utils/browser/puppeteer.js";
 import { cache, TTL_MS } from "../utils/cache.js";
 import { ENV } from "../utils/env.js";
 import {
@@ -87,8 +87,6 @@ interface MkvdramaEpisode {
   title: string;
   url: string;
 }
-
-const BEST_QUALITIES = ["2160p", "1080pHD", "1080p"];
 
 const MKVDRAMA_COUNTRY: Record<string, string> = {
   Korean: "south-korea",
@@ -343,7 +341,7 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
   async getDetailAndEpisodes(id: string): Promise<{
     detail: MetaDetail;
     episodes: MetaVideo[];
-    links: { link: string; quality: string }[];
+    links: { link: string; quality: string; label: string }[];
     response: FlareSolverrResponse;
     password: string | null;
   } | null> {
@@ -446,18 +444,18 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
         released: new Date(time).toISOString(),
       };
       const qualityBlocks = $("div.soraddlx").toArray();
-      const ouoRedirectLinks: { link: string; quality: string }[] = [];
+      const ouoRedirectLinks: { link: string; quality: string; label: string }[] = [];
       const episodeRanges: {
         minEpisode: number;
         maxEpisode: number;
-        links: { link: string; quality: string }[];
+        links: { link: string; quality: string; label: string }[];
       }[] = [];
 
       for (const qualityBlock of qualityBlocks) {
         const $qualityBlock = $(qualityBlock);
         const h3Text = $qualityBlock.find("h3").text().trim();
         const titleMatch = h3Text.match(/Episode\s+(\d+)\s*-\s*(\d+)/i);
-        const rangeLinks: { link: string; quality: string }[] = [];
+        const rangeLinks: { link: string; quality: string; label: string }[] = [];
 
         $qualityBlock.find("div.soraurlx").each((_, linkBlock) => {
           const $linkBlock = $(linkBlock);
@@ -470,7 +468,7 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
             const link = $anchor.attr("href") || "";
             if (!link || !/^Link\s*[12]$/i.test(label)) return;
 
-            const entry = { link, quality };
+            const entry = { link, quality, label };
             rangeLinks.push(entry);
             if (!ouoRedirectLinks.some((existing) => existing.link === link)) {
               ouoRedirectLinks.push(entry);
@@ -645,21 +643,17 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
         throw new MkvdramaError("No download links found");
       }
       const detail = data.detail;
-      // resolve all links
-      const bestLinks = data.links.filter((link) =>
-        BEST_QUALITIES.includes(link.quality),
+      // Resolve only the 1080p Link 2 mirror. The shared CDP helper creates
+      // a new tab, which SO7O does not support, so use the existing MKVDrama tab.
+      const selectedLink = data.links.find(
+        (link) => link.quality === "1080p" && /^Link\\s*2$/i.test(link.label),
       );
-      const links = await Promise.all(
-        bestLinks.map(async (link) => {
-          const redirectUrl = new URL(link.link, this.baseUrl).toString();
-          const ouoLink = await getRedirectedUrlCDP(
-            redirectUrl,
-            data.response?.solution?.cookies,
-            data.response?.solution?.userAgent,
-          );
-          return { link: ouoLink, quality: link.quality };
-        }),
-      );
+      if (!selectedLink) {
+        throw new MkvdramaError("1080p Link 2 not found");
+      }
+      const redirectUrl = new URL(selectedLink.link, this.baseUrl).toString();
+      const ouoLink = await this.getMkvdramaRedirectedUrlCDP(redirectUrl);
+      const links = [{ link: ouoLink, quality: selectedLink.quality }];
       const redirects = await Promise.all(
         links.map(async (link) => {
           const originalUrl = link.link;
@@ -779,6 +773,106 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
       if (episodeStreams) upsertStream(episodeStreams.flat());
     });
     return;
+  }
+
+  private async getMkvdramaRedirectedUrlCDP(
+    targetUrl: string,
+  ): Promise<string | null> {
+    const browser = await getBrowser();
+    let page;
+    let client;
+    let redirectedUrl: string | null = null;
+    let redirectLocation: string | undefined;
+    const notFinalHosts = [
+      "sl.buisthainan.com",
+      "mkvdrama",
+      "send",
+      "cloudflare",
+      "google",
+      "gstatic",
+      "jsdelivr",
+      "turnstile",
+    ];
+
+    try {
+      // SO7O cannot create targets. Reuse the verified MKVDrama tab and its
+      // existing cookies instead of opening a new page or resetting cookies.
+      const targetHost = new URL(this.baseUrl).hostname;
+      const pages = await browser.pages();
+      page = pages.find((candidate) => {
+        try {
+          return new URL(candidate.url()).hostname === targetHost;
+        } catch {
+          return false;
+        }
+      });
+      if (!page) {
+        throw new MkvdramaError("No existing MKVDrama browser tab for redirect");
+      }
+
+      client = await page.createCDPSession();
+      await client.send("Network.enable");
+      const onRequestSent = (params: any) => {
+        const requestUrl = params.request?.url || "";
+        if (
+          requestUrl.startsWith("http") &&
+          matchesHost(requestUrl, MKVDRAMA_HOST)
+        ) {
+          try {
+            if (new URL(requestUrl).pathname.startsWith("/c/")) {
+              redirectLocation = requestUrl;
+              redirectedUrl = requestUrl;
+              return;
+            }
+          } catch {
+            // Ignore malformed request URLs.
+          }
+        }
+        if (
+          requestUrl.startsWith("http") &&
+          !notFinalHosts.some((host) => requestUrl.includes(host)) &&
+          !redirectLocation
+        ) {
+          redirectLocation = requestUrl.split("?__cf_chl")[0];
+          redirectedUrl = redirectLocation || null;
+        }
+        if (matchesAnyHost(params.documentURL || "", OUO_HOSTS)) {
+          redirectLocation = params.documentURL;
+          redirectedUrl = params.documentURL;
+        }
+      };
+
+      client.on("Network.requestWillBeSent", onRequestSent);
+      try {
+        await page.goto(targetUrl, {
+          waitUntil: "load",
+          timeout: ENV.PUPPETEER_TIMEOUT_MS,
+        });
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      } catch (error) {
+        this.logger.warn(`MKVDrama Link 2 navigation did not complete: ${error}`);
+      } finally {
+        client.off("Network.requestWillBeSent", onRequestSent);
+      }
+
+      if (!redirectedUrl) {
+        const finalUrl = page.url();
+        if (
+          finalUrl !== targetUrl &&
+          !matchesHost(finalUrl, MKVDRAMA_HOST)
+        ) {
+          redirectedUrl = finalUrl;
+        }
+      }
+      this.logger.log(
+        `MKVDrama Link 2 redirect | found=${Boolean(redirectedUrl)} | url=${redirectedUrl || "none"}`,
+      );
+      return redirectedUrl;
+    } finally {
+      if (client) await client.detach().catch(() => {});
+      // The browser and tab belong to SO7O; only disconnect this CDP client.
+      await browser.disconnect();
+    }
   }
 
   async getDbMkvdrama(providerContentId: string) {
