@@ -790,37 +790,39 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
             return null;
           }
 
-          const browserResponse = await page.evaluate(async (targetUrl) => {
-            const result = await fetch(targetUrl, {
-              credentials: "include",
-              redirect: "follow",
-            });
-            return {
-              status: result.status,
-              finalUrl: result.url,
-              html: await result.text(),
-            };
-          }, url);
+          // Use top-level navigation rather than fetch(): MKVDrama returns
+          // HTTP 401 to in-page fetch requests even when the verified browser
+          // session can load the same URL normally.
+          const navigationResponse = await page.goto(url, {
+            waitUntil: "domcontentloaded",
+            timeout: 60000,
+          });
 
-          const browserHtml = browserResponse.html;
+          // Give the page scripts time to render the search results.
+          await page.waitForSelector("article.bs", { timeout: 15000 }).catch(() => null);
+
+          const browserHtml = await page.content();
           const browserLower = browserHtml.toLowerCase();
           const browserChallenge = challengeMarkers.some((marker) =>
             browserLower.includes(marker),
           );
+          const status = navigationResponse?.status() ?? 0;
+          const finalUrl = page.url();
+
           if (
-            browserResponse.status < 200 ||
-            browserResponse.status >= 400 ||
+            status < 200 ||
+            status >= 400 ||
             browserChallenge ||
             browserLower.includes("cloudflare")
           ) {
             this.logger.warn(
-              `MKVDrama browser fetch did not clear verification | status=${browserResponse.status} | challenge=${browserChallenge} | url=${browserResponse.finalUrl}`,
+              `MKVDrama browser navigation did not clear verification | status=${status} | challenge=${browserChallenge} | url=${finalUrl}`,
             );
             return null;
           }
 
           this.logger.log(
-            `MKVDrama browser fetch succeeded | status=${browserResponse.status} | bytes=${Buffer.byteLength(browserHtml)}`,
+            `MKVDrama browser navigation succeeded | status=${status} | bytes=${Buffer.byteLength(browserHtml)}`,
           );
           return browserHtml;
         } finally {
