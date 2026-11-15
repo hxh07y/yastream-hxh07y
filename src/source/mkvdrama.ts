@@ -812,8 +812,7 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
           if (
             status < 200 ||
             status >= 400 ||
-            browserChallenge ||
-            browserLower.includes("cloudflare")
+            browserChallenge
           ) {
             this.logger.warn(
               `MKVDrama browser navigation did not clear verification | status=${status} | challenge=${browserChallenge} | url=${finalUrl}`,
