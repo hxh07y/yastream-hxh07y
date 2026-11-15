@@ -22,6 +22,7 @@ import { Prefix, UserConfig } from "../lib/manifest.js";
 import {
   addJob,
   getJob,
+  retryJob,
   getJobQueue,
   JobMkvdramaScrape,
   JobMkvdramaStream,
@@ -218,7 +219,13 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
           case JOB_STATUS.PENDING:
             break;
           case JOB_STATUS.FAILED:
-            description = `Failed to get stream\nThis stream flow is not implemented yet\nAdmin will check this`;
+            await retryJob({
+              id: jobId,
+              status: JOB_STATUS.PENDING,
+              type: JOB_TYPE.MKVDRAMA_STREAM,
+              data: JSON.stringify({ mkvdramaId, content }),
+            });
+            description = `${total + 1} in queue\nWait about ${wait + 1} minutes`;
             break;
           default:
             break;
