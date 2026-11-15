@@ -10,7 +10,7 @@ import { getUrlsFromDecryptit } from "./decryptit.js";
 
 export async function getUrlsFromMkvdrama(url: string) {
   // Dynamic MKVDrama host lists are rendered in the already verified SO7O tab.
-  if (ENV.PUPPETEER_CDP_HTTP_URL || ENV.PUPPETEER_WS_ENDPOINT) {
+  if (ENV.PUPPETEER_CDP_HTTP_URL) {
     return getUrlsFromMkvdramaCDP(url);
   }
 
