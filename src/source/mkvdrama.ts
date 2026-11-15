@@ -377,9 +377,18 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
             waitUntil: "domcontentloaded",
             timeout: 60000,
           });
+          // The heading is available before MKVDrama renders its download sections.
+          // Wait specifically for the quality blocks instead of allowing h1 to end the wait.
           await page
-            .waitForSelector("h1, .soraddlx", { timeout: 15000 })
+            .waitForSelector("div.soraddlx", { timeout: 20000 })
             .catch(() => null);
+          const downloadSectionCount = await page.$eval(
+            "div.soraddlx",
+            (elements) => elements.length,
+          );
+          this.logger.log(
+            `MKVDrama detail DOM ready | downloadSections=${downloadSectionCount} | url=${page.url()}`,
+          );
 
           const html = await page.content();
           const status = navigationResponse?.status() ?? 0;
