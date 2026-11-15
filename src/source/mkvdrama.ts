@@ -342,9 +342,71 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
     try {
       const url = `${this.baseUrl}/${id}`;
       this.logger.log(`GET detail | ${url}`);
-      const response = await getFlareSolverr(url, this.name, 10);
+      let response: FlareSolverrResponse | null = null;
+
+      if (ENV.PUPPETEER_CDP_HTTP_URL) {
+        // Reuse the verified SO7O browser session for the detail page too.
+        const browser = await getBrowser();
+        try {
+          const targetHost = new URL(url).hostname;
+          const pages = await browser.pages();
+          const page = pages.find((candidate) => {
+            try {
+              return new URL(candidate.url()).hostname === targetHost;
+            } catch {
+              return false;
+            }
+          });
+
+          if (!page) {
+            this.logger.error(
+              "MKVDrama detail page unavailable: no same-origin SO7O tab is open",
+            );
+            return null;
+          }
+
+          const navigationResponse = await page.goto(url, {
+            waitUntil: "domcontentloaded",
+            timeout: 60000,
+          });
+          await page
+            .waitForSelector("h1, .soraddlx", { timeout: 15000 })
+            .catch(() => null);
+
+          const html = await page.content();
+          const status = navigationResponse?.status() ?? 0;
+          if (status < 200 || status >= 400) {
+            this.logger.error(
+              `MKVDrama detail browser navigation failed | status=${status} | url=${page.url()}`,
+            );
+            return null;
+          }
+
+          const cookies = await page.cookies(url);
+          const userAgent = await page.evaluate(() => navigator.userAgent);
+          response = {
+            status: "ok",
+            solution: {
+              url: page.url(),
+              status,
+              response: html,
+              cookies,
+              userAgent,
+            },
+          };
+          this.logger.log(
+            `MKVDrama detail browser navigation succeeded | status=${status} | bytes=${Buffer.byteLength(html)}`,
+          );
+        } finally {
+          // SO7O owns this browser; disconnect without closing its tabs.
+          await browser.disconnect();
+        }
+      } else {
+        response = await getFlareSolverr(url, this.name, 10);
+      }
+
       const content = response?.solution?.response || "";
-      if (!response || content.includes("Loading download")) {
+      if (!response || !content || content.includes("Loading download")) {
         this.logger.error(`Not found detail from id | ${id}`);
         return null;
       }
