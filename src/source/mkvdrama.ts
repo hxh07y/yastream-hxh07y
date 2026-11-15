@@ -419,6 +419,9 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
         return null;
       }
       const $ = cheerio.load(content);
+      this.logger.log(
+        `MKVDrama detail parsing | bytes=${Buffer.byteLength(content)} | title=${$("h1").text().trim()} | time=${JSON.stringify($("time").text())} | qualityBlocks=${$("div.soraddlx").length}`,
+      );
       const rawTitle = $("title").text();
       const title =
         $("h1").text().trim() || rawTitle.slice(0, rawTitle.indexOf("at"));
@@ -521,6 +524,9 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
       const episodes = [...episodeByNumber.values()].sort(
         (a, b) => (a.episode ?? 0) - (b.episode ?? 0),
       );
+      this.logger.log(
+        `MKVDrama detail extracted | links=${ouoRedirectLinks.length} | episodeRanges=${episodeRanges.length} | episodes=${episodes.length} | qualities=${[...new Set(ouoRedirectLinks.map((link) => link.quality))].join(",")}`,
+      );
 
       // Extract password from admin comment (first moderator comment)
       const password =
@@ -615,8 +621,20 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
 
     if (ouos.length === 0) {
       const data = await this.getDetailAndEpisodes(mkvdramaId);
-      if (!data || !(data.links.length > 0)) {
-        throw new MkvdramaError("No data found");
+      if (!data) {
+        this.logger.error(
+          `MKVDrama stream job | detail extraction returned null | id=${mkvdramaId}`,
+        );
+        throw new MkvdramaError("Detail extraction returned no data");
+      }
+      this.logger.log(
+        `MKVDrama stream job | detail received | links=${data.links.length} | episodes=${data.episodes.length}`,
+      );
+      if (data.links.length === 0) {
+        this.logger.error(
+          `MKVDrama stream job | detail has no download links | id=${mkvdramaId}`,
+        );
+        throw new MkvdramaError("No download links found");
       }
       const detail = data.detail;
       // resolve all links
