@@ -75,6 +75,9 @@ const envSchema = z.object({
   // Puppeteer
   PUPPETEER_WS_ENDPOINT: z.string().default(""),
   PUPPETEER_AUTH_HEADER: z.string().default(""),
+  // Optional HTTP CDP endpoint and token (e.g. SO7O WebView)
+  PUPPETEER_CDP_HTTP_URL: z.string().default(""),
+  PUPPETEER_CDP_TOKEN: z.string().default(""),
   PUPPETEER_TIMEOUT_MS: z.coerce.number().default(20000),
 
   // Proxy
