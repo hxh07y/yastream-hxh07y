@@ -89,7 +89,7 @@ async function getUrlsFromMkvdramaCDP(url: string) {
       try {
         document.querySelectorAll<HTMLLIElement>("li[data-i]").forEach((item) => {
           const button = item.querySelector<HTMLButtonElement>(".dl-btn");
-          if (!button) return;
+          if (!button || button.disabled) return;
 
           const before = captured.length;
           button.click();
