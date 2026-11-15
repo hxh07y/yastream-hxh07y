@@ -89,7 +89,7 @@ async function getUrlsFromMkvdramaCDP(url: string) {
         if (originalDescriptor) {
           Object.defineProperty(window, "open", originalDescriptor);
         } else {
-          delete (window as Window & { open?: typeof window.open }).open;
+          Reflect.deleteProperty(window, "open");
         }
       }
 
