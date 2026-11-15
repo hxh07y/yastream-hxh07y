@@ -14,11 +14,45 @@ const logger = new Logger("PUPPETEER");
 const FINAL_HOSTS = [...OUO_HOSTS, PIXELDRAIN_HOST];
 
 export async function getBrowser() {
+  let browserWSEndpoint = ENV.PUPPETEER_WS_ENDPOINT;
+  let headers: Record<string, string> = {
+    Authorization: ENV.PUPPETEER_AUTH_HEADER,
+  };
+
+  // Resolve the WebSocket endpoint dynamically for HTTP CDP bridges such as SO7O.
+  if (ENV.PUPPETEER_CDP_HTTP_URL) {
+    const endpoint = new URL(ENV.PUPPETEER_CDP_HTTP_URL);
+    endpoint.pathname = `${endpoint.pathname.replace(/\\/$/, "")}/json/version`;
+    if (ENV.PUPPETEER_CDP_TOKEN) {
+      endpoint.searchParams.set("token", ENV.PUPPETEER_CDP_TOKEN);
+    }
+
+    const response = await fetch(endpoint);
+    if (!response.ok) {
+      throw new Error(`CDP version endpoint returned HTTP ${response.status}`);
+    }
+    const version = (await response.json()) as {
+      webSocketDebuggerUrl?: string;
+    };
+    if (!version.webSocketDebuggerUrl) {
+      throw new Error("CDP version response did not include a WebSocket URL");
+    }
+
+    const websocket = new URL(version.webSocketDebuggerUrl);
+    if (ENV.PUPPETEER_CDP_TOKEN) {
+      websocket.searchParams.set("token", ENV.PUPPETEER_CDP_TOKEN);
+    }
+    browserWSEndpoint = websocket.toString();
+    headers = {};
+  }
+
+  if (!browserWSEndpoint) {
+    throw new Error("Puppeteer CDP endpoint is not configured");
+  }
+
   return await puppeteer.connect({
-    browserWSEndpoint: ENV.PUPPETEER_WS_ENDPOINT, // ws://localhost:3000
-    headers: {
-      Authorization: `${ENV.PUPPETEER_AUTH_HEADER}`,
-    },
+    browserWSEndpoint,
+    headers,
   });
 }
 
