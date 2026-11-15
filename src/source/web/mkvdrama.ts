@@ -45,7 +45,7 @@ async function getUrlsFromMkvdramaCDP(url: string) {
 
     // Prefer the tab where the host list has actually rendered. A second tab
     // may still be showing a verification page for the same URL.
-    let page = undefined;
+    let page: (typeof matchingPages)[number] | undefined;
     for (const candidate of matchingPages) {
       const itemCount = await candidate
         .$eval("li[data-i]", (items) => items.length)
