@@ -5,7 +5,7 @@ import { load } from "cheerio";
 import puppeteer, { CookieData, Handler, Page } from "puppeteer";
 import { OUO_HOSTS } from "../../source/web/ouo.js";
 import { matchesAnyHost, matchesHost } from "../../utils/url-validation.js";
-import { PIXELDRAIN_HOST } from "../constant.js";
+import { MKVDRAMA_HOST, PIXELDRAIN_HOST } from "../constant.js";
 import { ENV } from "../env.js";
 import { handleError } from "../error.js";
 import { Logger } from "../logger.js";
@@ -287,6 +287,20 @@ export async function getRedirectedUrlCDP(
       // Also capture any request to an external domain (follow-up after redirect)
       const reqUrl = params.request?.url || "";
       logger.log(`reqUrl ${reqUrl}`);
+
+      // MKVDrama redirects its episode link to a same-domain /c/ host-list page.
+      if (reqUrl.startsWith("http") && matchesHost(reqUrl, MKVDRAMA_HOST)) {
+        try {
+          if (new URL(reqUrl).pathname.startsWith("/c/")) {
+            redirectLocation = reqUrl;
+            redirectedUrl = reqUrl;
+            return;
+          }
+        } catch {
+          // Ignore malformed request URLs and continue with normal redirect handling.
+        }
+      }
+
       if (
         reqUrl.startsWith("http") &&
         !NOT_FINAL_HOSTS.some((host) => reqUrl.includes(host))
