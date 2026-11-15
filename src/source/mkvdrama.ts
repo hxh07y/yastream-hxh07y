@@ -34,7 +34,7 @@ import {
   FlareSolverrResponse,
   getFlareSolverr,
 } from "../utils/browser/flaresolverr.js";
-import { getRedirectedUrlCDP } from "../utils/browser/puppeteer.js";
+import { getBrowser, getRedirectedUrlCDP } from "../utils/browser/puppeteer.js";
 import { cache, TTL_MS } from "../utils/cache.js";
 import {
   FILECRYPT_HOST,
@@ -768,7 +768,66 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
       this.logger.log(
         `Direct fetch inspected | bytes=${Buffer.byteLength(response)} | challenge=${challenge} | title=${pageTitle}`,
       );
-      if (challenge || lower.includes("cloudflare")) return null;
+      if (challenge || lower.includes("cloudflare")) {
+        // Axios cannot pass MKVDrama's browser verification. Reuse the
+        // already verified same-origin SO7O tab and fetch without navigating it.
+        const browser = await getBrowser();
+        try {
+          const targetHost = new URL(url).hostname;
+          const pages = await browser.pages();
+          const page = pages.find((candidate) => {
+            try {
+              return new URL(candidate.url()).hostname === targetHost;
+            } catch {
+              return false;
+            }
+          });
+
+          if (!page) {
+            this.logger.warn(
+              "MKVDrama direct fetch was challenged and no same-origin SO7O tab is open",
+            );
+            return null;
+          }
+
+          const browserResponse = await page.evaluate(async (targetUrl) => {
+            const result = await fetch(targetUrl, {
+              credentials: "include",
+              redirect: "follow",
+            });
+            return {
+              status: result.status,
+              finalUrl: result.url,
+              html: await result.text(),
+            };
+          }, url);
+
+          const browserHtml = browserResponse.html;
+          const browserLower = browserHtml.toLowerCase();
+          const browserChallenge = challengeMarkers.some((marker) =>
+            browserLower.includes(marker),
+          );
+          if (
+            browserResponse.status < 200 ||
+            browserResponse.status >= 400 ||
+            browserChallenge ||
+            browserLower.includes("cloudflare")
+          ) {
+            this.logger.warn(
+              `MKVDrama browser fetch did not clear verification | status=${browserResponse.status} | challenge=${browserChallenge} | url=${browserResponse.finalUrl}`,
+            );
+            return null;
+          }
+
+          this.logger.log(
+            `MKVDrama browser fetch succeeded | status=${browserResponse.status} | bytes=${Buffer.byteLength(browserHtml)}`,
+          );
+          return browserHtml;
+        } finally {
+          // SO7O owns this browser; never close the shared browser.
+          await browser.disconnect();
+        }
+      }
       return response;
     } catch (error) {
       this.logger.warn(`Axios request failed: ${error}`);
