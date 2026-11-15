@@ -8,7 +8,7 @@ import {
   Subtitle,
 } from "@stremio-addon/sdk";
 import * as cheerio from "cheerio";
-import { CookieData } from "puppeteer";
+import { CookieData, Page } from "puppeteer";
 import { uuidv7 } from "uuidv7";
 import { upsertStream } from "../db/queries.js";
 import {
@@ -35,7 +35,7 @@ import {
   FlareSolverrResponse,
   getFlareSolverr,
 } from "../utils/browser/flaresolverr.js";
-import { getBrowser } from "../utils/browser/puppeteer.js";
+import { getBrowser, getRedirectedUrlCDP } from "../utils/browser/puppeteer.js";
 import { cache, TTL_MS } from "../utils/cache.js";
 import { ENV } from "../utils/env.js";
 import {
@@ -779,8 +779,8 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
     targetUrl: string,
   ): Promise<string | null> {
     const browser = await getBrowser();
-    let page;
-    let client;
+    let page: Page | undefined;
+    let client: Awaited<ReturnType<Page["createCDPSession"]>> | undefined;
     let redirectedUrl: string | null = null;
     let redirectLocation: string | undefined;
     const notFinalHosts = [
