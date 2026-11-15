@@ -39,6 +39,11 @@ export async function addJob(job: EJobInsert) {
   await insertJobs([job]);
 }
 
+export async function retryJob(job: EJobInsert) {
+  logger.log(`Retry ${job.id}`);
+  await upsertJobs([job]);
+}
+
 export function upsertJob(job: EJobInsert) {
   upsertJobs([job]);
 }
