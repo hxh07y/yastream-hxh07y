@@ -1,3 +1,6 @@
+/// <reference lib="dom" />
+/// <reference lib="dom.iterable" />
+
 import * as cheerio from "cheerio";
 import { axiosGet } from "../../utils/axios.js";
 import { getFlareSolverr } from "../../utils/browser/flaresolverr.js";
