@@ -22,7 +22,7 @@ export async function getBrowser() {
   // Resolve the WebSocket endpoint dynamically for HTTP CDP bridges such as SO7O.
   if (ENV.PUPPETEER_CDP_HTTP_URL) {
     const endpoint = new URL(ENV.PUPPETEER_CDP_HTTP_URL);
-    endpoint.pathname = `${endpoint.pathname.replace(/\\/$/, "")}/json/version`;
+    endpoint.pathname = `${endpoint.pathname.replace(/\/$/, "")}/json/version`;
     if (ENV.PUPPETEER_CDP_TOKEN) {
       endpoint.searchParams.set("token", ENV.PUPPETEER_CDP_TOKEN);
     }
@@ -99,7 +99,7 @@ export async function getPuppeteerRequest(
     console.error(error);
   } finally {
     await page.close();
-    await browser.close();
+    await browser.disconnect();
   }
   return html;
 }
