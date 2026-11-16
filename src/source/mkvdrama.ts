@@ -58,7 +58,7 @@ import { ContentDetail } from "./meta.js";
 import { BaseProvider } from "./provider.js";
 import { getUrlsFromFilecrypt } from "./web/filecrypt.js";
 import { getUrlsFromMkvdrama } from "./web/mkvdrama.js";
-import { getOuoFinalUrl, getOuoId, OUO_HOSTS } from "./web/ouo.js";
+import { getOuoId, OUO_HOSTS } from "./web/ouo.js";
 import { getUrlsFromViewcrateDlc } from "./web/viewcrate.js";
 interface MkvdramaSeries {
   id: string;
@@ -668,41 +668,38 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
           links.push({ link: null, quality: selectedLink.quality });
         }
       }
-      const redirects = await Promise.all(
-        links.map(async (link) => {
-          const originalUrl = link.link;
-          if (!originalUrl) return;
-          let redirectedUrl: string | undefined;
-          let id: string | undefined;
-          const isOuo = matchesAnyHost(originalUrl, OUO_HOSTS);
-          switch (true) {
-            case isOuo:
-              redirectedUrl = await getOuoFinalUrl(originalUrl);
-              id = getOuoId(originalUrl);
-              break;
-            case matchesHost(originalUrl, VIEWCRATE_ORIGIN):
-            case matchesHost(originalUrl, FILECRYPT_ORIGIN):
-              redirectedUrl = originalUrl;
-              id = getOuoId(originalUrl);
-              break;
-            default:
-              redirectedUrl = originalUrl;
-              break;
-          }
-          if (id && redirectedUrl) {
-            const ouo: EOuoInsert & { quality: Quality } = {
-              id,
-              originalUrl,
-              redirectedUrl,
-              password: data.password,
-              quality: link.quality as Quality,
-            };
-            // ouos.push(ouo);
-            return ouo;
-          }
-          return;
-        }),
-      );
+      // Resolve OUO mirrors sequentially because both use the same SO7O tab.
+      const redirects: (EOuoInsert & { quality: Quality })[] = [];
+      for (const link of links) {
+        const originalUrl = link.link;
+        if (!originalUrl) continue;
+        let redirectedUrl: string | undefined;
+        let id: string | undefined;
+        const isOuo = matchesAnyHost(originalUrl, OUO_HOSTS);
+        switch (true) {
+          case isOuo:
+            redirectedUrl = await this.getMkvdramaOuoFinalUrlCDP(originalUrl);
+            id = getOuoId(originalUrl);
+            break;
+          case matchesHost(originalUrl, VIEWCRATE_ORIGIN):
+          case matchesHost(originalUrl, FILECRYPT_ORIGIN):
+            redirectedUrl = originalUrl;
+            id = getOuoId(originalUrl);
+            break;
+          default:
+            redirectedUrl = originalUrl;
+            break;
+        }
+        if (id && redirectedUrl) {
+          redirects.push({
+            id,
+            originalUrl,
+            redirectedUrl,
+            password: data.password,
+            quality: link.quality as Quality,
+          });
+        }
+      }
       redirects.forEach((redirect) => {
         if (redirect) ouos.push(redirect);
       });
@@ -885,6 +882,72 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
     } finally {
       if (client) await client.detach().catch(() => {});
       // The browser and tab belong to SO7O; only disconnect this CDP client.
+      await browser.disconnect();
+    }
+  }
+
+  private async getMkvdramaOuoFinalUrlCDP(
+    targetUrl: string,
+  ): Promise<string | undefined> {
+    const browser = await getBrowser();
+    let page: Page | undefined;
+    try {
+      const pages = await browser.pages();
+      // Link 1 may have left the shared tab on ouo.press before Link 2 runs.
+      // Reuse that same tab rather than requiring it to remain on MKVDrama.
+      page = pages.find((candidate) => {
+        try {
+          const hostname = new URL(candidate.url()).hostname;
+          return (
+            matchesHost(candidate.url(), MKVDRAMA_HOST) ||
+            OUO_HOSTS.includes(hostname)
+          );
+        } catch {
+          return false;
+        }
+      });
+      if (!page) {
+        throw new MkvdramaError("No existing SO7O browser tab for OUO redirect");
+      }
+
+      await page.goto(targetUrl, {
+        waitUntil: "domcontentloaded",
+        timeout: ENV.PUPPETEER_TIMEOUT_MS,
+      }).catch((error) => {
+        this.logger.warn(`MKVDrama OUO navigation did not complete: ${error}`);
+      });
+
+      // Allow the OUO page scripts/countdown to run before submitting any
+      // remaining form. This stays inside the MKVDrama flow; shared OUO
+      // resolution for other providers remains unchanged.
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      let currentUrl = page.url();
+      if (matchesAnyHost(currentUrl, OUO_HOSTS)) {
+        await page.evaluate(() => {
+          const form =
+            document.querySelector<HTMLFormElement>(
+              "#form-captcha, #form-go, #form-shorten",
+            );
+          if (form) form.requestSubmit();
+        }).catch(() => undefined);
+      }
+
+      const deadline = Date.now() + 25000;
+      while (Date.now() < deadline) {
+        currentUrl = page.url();
+        if (currentUrl && !matchesAnyHost(currentUrl, OUO_HOSTS)) {
+          this.logger.log(`MKVDrama OUO resolved | url=${currentUrl}`);
+          return currentUrl;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+
+      this.logger.warn(
+        `MKVDrama OUO did not leave shortener page | url=${page.url()}`,
+      );
+      return undefined;
+    } finally {
+      // SO7O owns this browser and tab; never close either.
       await browser.disconnect();
     }
   }
