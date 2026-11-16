@@ -1123,69 +1123,58 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
       if (challenge || lower.includes("cloudflare")) {
         // Axios cannot pass MKVDrama's browser verification. Reuse the
         // already verified same-origin SO7O tab and fetch without navigating it.
-        const browser = await getBrowser();
-        try {
-          const targetHost = new URL(url).hostname;
-          const pages = await browser.pages();
-          const page =
-            pages.find((candidate) => {
-              try {
-                return new URL(candidate.url()).hostname === targetHost;
-              } catch {
-                return false;
-              }
-            }) ||
-            // The shared SO7O tab may have been left on OUO or a hoster page
-            // by the previous stream-resolution attempt. Reuse it and navigate
-            // back to MKVDrama instead of requiring its current URL to match.
-            pages.find((candidate) => candidate.url() !== "about:blank");
+        return await withCdpPageLock(async () => {
+          const browser = await getBrowser();
+          try {
+            const targetHost = new URL(url).hostname;
+            const pages = await browser.pages();
+            const page =
+              pages.find((candidate) => {
+                try {
+                  return new URL(candidate.url()).hostname === targetHost;
+                } catch {
+                  return false;
+                }
+              }) ||
+              pages.find((candidate) => candidate.url() !== "about:blank");
 
-          if (!page) {
-            const availableTabs = pages.map((candidate) => candidate.url());
-            this.logger.warn(
-              `MKVDrama direct fetch was challenged and no reusable SO7O tab is open | tabs=${JSON.stringify(availableTabs)}`,
+            if (!page) {
+              const availableTabs = pages.map((candidate) => candidate.url());
+              this.logger.warn(
+                `MKVDrama direct fetch was challenged and no reusable SO7O tab is open | tabs=${JSON.stringify(availableTabs)}`,
+              );
+              return null;
+            }
+
+            const navigationResponse = await page.goto(url, {
+              waitUntil: "domcontentloaded",
+              timeout: 60000,
+            });
+            await page.waitForSelector("article.bs", { timeout: 15000 }).catch(() => null);
+
+            const browserHtml = await page.content();
+            const browserLower = browserHtml.toLowerCase();
+            const browserChallenge = challengeMarkers.some((marker) =>
+              browserLower.includes(marker),
             );
-            return null;
-          }
+            const status = navigationResponse?.status() ?? 0;
+            const finalUrl = page.url();
 
-          // Use top-level navigation rather than fetch(): MKVDrama returns
-          // HTTP 401 to in-page fetch requests even when the verified browser
-          // session can load the same URL normally.
-          const navigationResponse = await page.goto(url, {
-            waitUntil: "domcontentloaded",
-            timeout: 60000,
-          });
+            if (status < 200 || status >= 400 || browserChallenge) {
+              this.logger.warn(
+                `MKVDrama browser navigation did not clear verification | status=${status} | challenge=${browserChallenge} | url=${finalUrl}`,
+              );
+              return null;
+            }
 
-          // Give the page scripts time to render the search results.
-          await page.waitForSelector("article.bs", { timeout: 15000 }).catch(() => null);
-
-          const browserHtml = await page.content();
-          const browserLower = browserHtml.toLowerCase();
-          const browserChallenge = challengeMarkers.some((marker) =>
-            browserLower.includes(marker),
-          );
-          const status = navigationResponse?.status() ?? 0;
-          const finalUrl = page.url();
-
-          if (
-            status < 200 ||
-            status >= 400 ||
-            browserChallenge
-          ) {
-            this.logger.warn(
-              `MKVDrama browser navigation did not clear verification | status=${status} | challenge=${browserChallenge} | url=${finalUrl}`,
+            this.logger.log(
+              `MKVDrama browser navigation succeeded | status=${status} | bytes=${Buffer.byteLength(browserHtml)}`,
             );
-            return null;
+            return browserHtml;
+          } finally {
+            await browser.disconnect();
           }
-
-          this.logger.log(
-            `MKVDrama browser navigation succeeded | status=${status} | bytes=${Buffer.byteLength(browserHtml)}`,
-          );
-          return browserHtml;
-        } finally {
-          // SO7O owns this browser; never close the shared browser.
-          await browser.disconnect();
-        }
+        });
       }
       return response;
     } catch (error) {
