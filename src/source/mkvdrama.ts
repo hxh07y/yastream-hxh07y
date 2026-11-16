@@ -806,19 +806,20 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
     ];
 
     try {
-      // SO7O cannot create targets. Reuse the verified MKVDrama tab and its
-      // existing cookies instead of opening a new page or resetting cookies.
+      // SO7O cannot create targets. Reuse the existing MKVDrama/OUO tab.
+      // Link 1 may already have navigated the shared tab to ouo.press.
       const targetHost = new URL(this.baseUrl).hostname;
       const pages = await browser.pages();
       page = pages.find((candidate) => {
         try {
-          return new URL(candidate.url()).hostname === targetHost;
+          const hostname = new URL(candidate.url()).hostname;
+          return hostname === targetHost || OUO_HOSTS.includes(hostname);
         } catch {
           return false;
         }
       });
       if (!page) {
-        throw new MkvdramaError("No existing MKVDrama browser tab for redirect");
+        throw new MkvdramaError("No existing MKVDrama/OUO browser tab for redirect");
       }
 
       client = await page.createCDPSession();
