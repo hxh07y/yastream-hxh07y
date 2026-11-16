@@ -44,8 +44,8 @@ export async function retryJob(job: EJobInsert) {
   await upsertJobs([job]);
 }
 
-export function upsertJob(job: EJobInsert) {
-  upsertJobs([job]);
+export async function upsertJob(job: EJobInsert) {
+  await upsertJobs([job]);
 }
 
 export function startCronJob() {
@@ -83,13 +83,13 @@ async function runCronJob() {
         const data = JSON.parse(job.data);
         data.error = error.message;
         job.data = JSON.stringify(data);
-        upsertJob({ ...job, status: JOB_STATUS.FAILED });
+        await upsertJob({ ...job, status: JOB_STATUS.FAILED });
         ntfy("yastream job failed", `${job.id}`, "low");
         jobMap.delete(job.id);
         break;
       }
       job.status = JOB_STATUS.DONE;
-      upsertJob(job);
+      await upsertJob(job);
       jobMap.delete(job.id);
       break;
     case JOB_TYPE.MKVDRAMA_SCRAPE:
