@@ -646,7 +646,7 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
       // Resolve only the 1080p Link 2 mirror. The shared CDP helper creates
       // a new tab, which SO7O does not support, so use the existing MKVDrama tab.
       const selectedLink = data.links.find(
-        (link) => link.quality === "1080p" && /^Link\\s*2$/i.test(link.label),
+        (link) => link.quality === "1080p" && /^Link\s*2$/i.test(link.label),
       );
       if (!selectedLink) {
         throw new MkvdramaError("1080p Link 2 not found");
