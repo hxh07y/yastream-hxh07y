@@ -312,7 +312,30 @@ export async function postRedirectedUrlCDP(
       page.off("request", changeToPost);
       client.off("Network.requestWillBeSent", onRequestSent);
       client.off("Network.responseReceived", onResponseReceived);
-      logger.log(`Send POST result | submitted=${postSubmitted} | pageUrl=${page.url()} | capturedUrl=${redirectLocation || "none"}`);
+      const pageDiagnostics = await page.evaluate(() => ({
+        title: document.title,
+        forms: Array.from(document.forms).map((form) => ({
+          action: form.action,
+          method: form.method,
+          fields: Array.from(form.elements)
+            .filter((element) => element instanceof HTMLInputElement)
+            .map((element) => ({
+              name: (element as HTMLInputElement).name,
+              type: (element as HTMLInputElement).type,
+              hasValue: Boolean((element as HTMLInputElement).value),
+            })),
+        })),
+        videoSources: Array.from(document.querySelectorAll("video, source"))
+          .map((element) => ({
+            tag: element.tagName,
+            src: (element as HTMLMediaElement).src || element.getAttribute("src") || "",
+          }))
+          .filter((item) => Boolean(item.src)),
+        bodyText: (document.body?.innerText || "").replace(/\\s+/g, " ").slice(0, 700),
+      })).catch((error) => ({ diagnosticError: String(error) }));
+      logger.log(
+        `Send POST result | submitted=${postSubmitted} | pageUrl=${page.url()} | capturedUrl=${redirectLocation || "none"} | page=${JSON.stringify(pageDiagnostics)}`,
+      );
     }
 
     logger.trace(`off request: ${targetUrl}`);
