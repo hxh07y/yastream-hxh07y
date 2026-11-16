@@ -922,12 +922,50 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
         this.logger.warn(`MKVDrama OUO navigation did not complete: ${error}`);
       });
 
-      // Allow the OUO page scripts/countdown to run before submitting any
-      // remaining form. This stays inside the MKVDrama flow; shared OUO
-      // resolution for other providers remains unchanged.
+      // Allow the OUO page scripts/countdown to run before inspecting its
+      // next step. Log structure only; never expose hidden token/input values.
       await new Promise((resolve) => setTimeout(resolve, 2000));
       let currentUrl = page.url();
       if (matchesAnyHost(currentUrl, OUO_HOSTS)) {
+        const diagnostics = await page.evaluate(() => {
+          const forms = Array.from(document.forms).map((form) => ({
+            id: form.id || "",
+            action: form.getAttribute("action") || "",
+            method: (form.method || "get").toUpperCase(),
+            inputs: Array.from(form.elements)
+              .filter((element): element is HTMLInputElement =>
+                element instanceof HTMLInputElement,
+              )
+              .map((input) => ({
+                name: input.name || "",
+                type: input.type || "",
+                hasValue: Boolean(input.value),
+              })),
+            buttons: Array.from(form.querySelectorAll("button, input[type=submit]"))
+              .map((button) =>
+                (button.textContent || (button as HTMLInputElement).value || "")
+                  .trim()
+                  .slice(0, 80),
+              ),
+          }));
+          const bodyText = (document.body?.innerText || "")
+            .replace(/\\s+/g, " ")
+            .trim()
+            .slice(0, 500);
+          return {
+            title: document.title,
+            url: location.href,
+            forms,
+            bodyText,
+            buttons: Array.from(document.querySelectorAll("button"))
+              .map((button) => button.innerText.trim().slice(0, 80))
+              .filter(Boolean)
+              .slice(0, 20),
+          };
+        }).catch((error) => ({ inspectionError: String(error) }));
+        this.logger.log(
+          `MKVDrama OUO page diagnostics | ${JSON.stringify(diagnostics)}`,
+        );
         await page.evaluate(() => {
           const form =
             document.querySelector<HTMLFormElement>(
