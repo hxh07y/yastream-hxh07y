@@ -7,10 +7,14 @@ const logger = new Logger("DB");
 export async function upsertMkvdrama(mkvdramas: EMkvdramaInsert[]) {
   if (!db) return;
   try {
-    await db.insert(mkvdrama).values(mkvdramas);
+    await db
+      .insert(mkvdrama)
+      .values(mkvdramas)
+      .onConflictDoNothing({ target: mkvdrama.ouoId });
     logger.debug(`Upserted mkvdrama ${mkvdramas[0]?.providerContentId}`);
   } catch (e) {
     handleError(e, logger, `Failed to upsert mkvdrama`);
+    throw e;
   }
 }
 
