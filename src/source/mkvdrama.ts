@@ -643,17 +643,31 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
         throw new MkvdramaError("No download links found");
       }
       const detail = data.detail;
-      // Resolve only the 1080p Link 2 mirror. The shared CDP helper creates
-      // a new tab, which SO7O does not support, so use the existing MKVDrama tab.
-      const selectedLink = data.links.find(
-        (link) => link.quality === "1080p" && /^Link\s*2$/i.test(link.label),
+      // Test both 1080p mirrors, sequentially, because the resolver reuses
+      // one SO7O tab and concurrent navigations would interfere with each other.
+      const selectedLinks = data.links.filter(
+        (link) =>
+          link.quality === "1080p" && /^Link\s*[12]$/i.test(link.label),
       );
-      if (!selectedLink) {
-        throw new MkvdramaError("1080p Link 2 not found");
+      if (selectedLinks.length === 0) {
+        throw new MkvdramaError("1080p Link 1 and Link 2 not found");
       }
-      const redirectUrl = new URL(selectedLink.link, this.baseUrl).toString();
-      const ouoLink = await this.getMkvdramaRedirectedUrlCDP(redirectUrl);
-      const links = [{ link: ouoLink, quality: selectedLink.quality }];
+      const links: { link: string | null; quality: string }[] = [];
+      for (const selectedLink of selectedLinks) {
+        const redirectUrl = new URL(selectedLink.link, this.baseUrl).toString();
+        try {
+          const ouoLink = await this.getMkvdramaRedirectedUrlCDP(redirectUrl);
+          this.logger.log(
+            `MKVDrama ${selectedLink.quality} ${selectedLink.label} resolved | found=${Boolean(ouoLink)}`,
+          );
+          links.push({ link: ouoLink, quality: selectedLink.quality });
+        } catch (error) {
+          this.logger.warn(
+            `MKVDrama ${selectedLink.quality} ${selectedLink.label} failed: ${error}`,
+          );
+          links.push({ link: null, quality: selectedLink.quality });
+        }
+      }
       const redirects = await Promise.all(
         links.map(async (link) => {
           const originalUrl = link.link;
