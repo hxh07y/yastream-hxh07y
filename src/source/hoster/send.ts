@@ -3,6 +3,9 @@ import { postRedirectedUrlCDP } from "../../utils/browser/puppeteer.js";
 import { cleanUrl } from "../../utils/format.js";
 import { getMediaflowproxyTranscodeUrl } from "../../utils/mediaflowproxy.js";
 import { matchesAnyHost } from "../../utils/url-validation.js";
+import { Logger } from "../../utils/logger.js";
+
+const logger = new Logger("SEND");
 
 export const SEND_HOSTS = ["send.cm", "send.now"];
 export const SEND_ORIGINS = SEND_HOSTS.map((host) => `https://${host}`);
@@ -20,13 +23,22 @@ export function filterSendUrls(urls: string[]) {
 
 export async function getSendDownloadUrl(url: string, config: UserConfig) {
   // https://send.now/y52ejnt1f6bb -> https://dl9750.usercdn.com/d/nryutd7t6cosj4l4kzru5thb27ghmr27e5n53y7cu4kzpeo7vu3b56f6qv4ha7pdf3scxdy4/The.Scarecrow.S01E02.1080p.TVING.WEB-DL.AAC2.0.H.264-Marco.mkv
-  const id = new URL(url).pathname.split("/").pop();
-  const postData = `op=download2&id=${id}&rand=&referer=&download_a=CONTINUE`;
+  const id = new URL(url).pathname.split("/").filter(Boolean).pop();
+  if (!id) {
+    logger.error(`Unable to resolve Send download: missing file ID in ${url}`);
+    return "";
+  }
+
+  const postData = `op=download2&id=${encodeURIComponent(id)}&rand=&referer=&download_a=CONTINUE`;
   // Keep the form submission on the same host as the supplied share URL.
   const sendOrigin = new URL(url).origin;
   const streamUrl = await postRedirectedUrlCDP(`${sendOrigin}/`, postData);
-  const proxyUrl = getMediaflowproxyTranscodeUrl(streamUrl, config);
-  return proxyUrl;
+  if (!streamUrl) {
+    logger.error(`Send download redirect was not found for file ID ${id}`);
+    return "";
+  }
+
+  return getMediaflowproxyTranscodeUrl(streamUrl, config);
 }
 
 // Not working
