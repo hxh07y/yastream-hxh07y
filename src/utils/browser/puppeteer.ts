@@ -107,7 +107,7 @@ export async function getPuppeteerRequest(
     return html;
   };
   return ENV.PUPPETEER_CDP_HTTP_URL
-    ? withCdpPageLock(request)
+    ? withCdpPageLock("getPuppeteerRequest", request)
     : request();
 }
 // export async function getPuppeteerRequest(
@@ -180,17 +180,36 @@ const NOT_FINAL_HOSTS = [
 // SO7O exposes one shared WebView page. Every operation that navigates or
 // inspects that page must hold this lock for its full lifetime.
 let cdpPageQueue: Promise<void> = Promise.resolve();
+let activeCdpPageOperation = "none";
+let cdpPageOperationSequence = 0;
 
-export async function withCdpPageLock<T>(operation: () => Promise<T>): Promise<T> {
+export async function withCdpPageLock<T>(
+  operationName: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const operationId = ++cdpPageOperationSequence;
+  const requestedAt = Date.now();
+  logger.log(
+    `CDP lock request | id=${operationId} | op=${operationName} | pid=${process.pid} | active=${activeCdpPageOperation}`,
+  );
   const previousOperation = cdpPageQueue;
   let releaseOperation!: () => void;
   cdpPageQueue = new Promise<void>((resolve) => {
     releaseOperation = resolve;
   });
   await previousOperation;
+  const acquiredAt = Date.now();
+  activeCdpPageOperation = `${operationName}#${operationId}`;
+  logger.log(
+    `CDP lock acquired | id=${operationId} | op=${operationName} | pid=${process.pid} | waitMs=${acquiredAt - requestedAt}`,
+  );
   try {
     return await operation();
   } finally {
+    logger.log(
+      `CDP lock released | id=${operationId} | op=${operationName} | pid=${process.pid} | heldMs=${Date.now() - acquiredAt}`,
+    );
+    activeCdpPageOperation = "none";
     releaseOperation();
   }
 }
@@ -310,6 +329,14 @@ async function postRedirectedUrlCDPLocked(
       );
     };
 
+    const onMainFrameNavigated = (frame: any) => {
+      if (frame === page?.mainFrame()) {
+        logger.warn(
+          `Page navigated during Send POST | url=${frame.url()} | lockOwner=${activeCdpPageOperation} | pid=${process.pid}`,
+        );
+      }
+    };
+    page.on("framenavigated", onMainFrameNavigated);
     page.on("request", changeToPost);
     client.on("Network.requestWillBeSent", onRequestSent);
     client.on("Network.responseReceived", onResponseReceived);
@@ -324,6 +351,7 @@ async function postRedirectedUrlCDPLocked(
       handleError(error, logger, `Fail post CDP request ${targetUrl}`);
     } finally {
       page.off("request", changeToPost);
+      page.off("framenavigated", onMainFrameNavigated);
       client.off("Network.requestWillBeSent", onRequestSent);
       client.off("Network.responseReceived", onResponseReceived);
       const pageDiagnostics = await page.evaluate(() => ({
@@ -377,7 +405,7 @@ export function postRedirectedUrlCDP(
   userAgent?: string,
   formSelector?: string,
 ) {
-  return withCdpPageLock(() =>
+  return withCdpPageLock("postRedirectedUrlCDP", () =>
     postRedirectedUrlCDPLocked(targetUrl, postData, cookies, userAgent, formSelector),
   );
 }
@@ -477,7 +505,7 @@ export function getRedirectedUrlCDP(
   cookies?: CookieData[],
   userAgent?: string,
 ) {
-  return withCdpPageLock(() =>
+  return withCdpPageLock("getRedirectedUrlCDP", () =>
     getRedirectedUrlCDPLocked(targetUrl, cookies, userAgent),
   );
 }
