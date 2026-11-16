@@ -170,6 +170,10 @@ const NOT_FINAL_HOSTS = [
   "turnstile",
 ];
 
+// SO7O's WebView CDP bridge does not support Target.createTarget. Serialize
+// these operations and reuse its existing page instead of asking Chromium for a new tab.
+let postRedirectedUrlCdpQueue: Promise<void> = Promise.resolve();
+
 export async function postRedirectedUrlCDP(
   targetUrl: string,
   postData?: string,
@@ -177,15 +181,30 @@ export async function postRedirectedUrlCDP(
   userAgent?: string,
   formSelector?: string,
 ) {
+  const previousRequest = postRedirectedUrlCdpQueue;
+  let releaseRequest!: () => void;
+  postRedirectedUrlCdpQueue = new Promise<void>((resolve) => {
+    releaseRequest = resolve;
+  });
+  await previousRequest;
+
   let redirectedUrl = "";
-  const browser = await getBrowser();
-  if (cookies) browser.setCookie(...cookies);
+  let browser: Awaited<ReturnType<typeof getBrowser>> | undefined;
+  let page: Page | undefined;
+  let client: Awaited<ReturnType<Page["createCDPSession"]>> | undefined;
+  let interceptionEnabled = false;
+
   try {
-    const page: Page = await browser.newPage();
+    browser = await getBrowser();
+    if (cookies) browser.setCookie(...cookies);
+
+    const pages = await browser.pages();
+    page = pages[0];
+    if (!page) {
+      throw new Error("SO7O CDP did not expose an existing WebView page");
+    }
+
     page.setUserAgent({ userAgent: userAgent || ENV.USER_AGENT });
-    await page.setRequestInterception(true);
-    const client = await page.createCDPSession();
-    await client.send("Network.enable");
 
     let formActionUrl = targetUrl;
     if (formSelector && !postData) {
@@ -201,7 +220,11 @@ export async function postRedirectedUrlCDP(
       logger.trace(`parsed postData ${postData?.substring(0, 80)}`);
     }
 
-    // for (const link of cLinks) {
+    await page.setRequestInterception(true);
+    interceptionEnabled = true;
+    client = await page.createCDPSession();
+    await client.send("Network.enable");
+
     let redirectLocation: string | undefined;
     let postSubmitted = false;
     const changeToPost: Handler<any> = (interceptRequest) => {
@@ -245,15 +268,14 @@ export async function postRedirectedUrlCDP(
         waitUntil: "domcontentloaded",
         timeout: 10000,
       });
-      await new Promise((r) => setTimeout(r, 500));
+      await new Promise((resolve) => setTimeout(resolve, 500));
     } catch (error) {
       handleError(error, logger, `Fail post CDP request ${targetUrl}`);
     } finally {
       page.off("request", changeToPost);
       client.off("Network.requestWillBeSent", onRequestSent);
-      await page.close().catch(() => {});
-      await client.detach().catch(() => {});
     }
+
     logger.trace(`off request: ${targetUrl}`);
     if (redirectLocation) {
       logger.log(`redirected (CDP): ${targetUrl} → ${redirectLocation}`);
@@ -262,7 +284,13 @@ export async function postRedirectedUrlCDP(
   } catch (cdpErr) {
     logger.error(`CDP resolution failed: ${cdpErr}`);
   } finally {
-    await browser.disconnect();
+    if (page && interceptionEnabled) {
+      await page.setRequestInterception(false).catch(() => {});
+    }
+    await client?.detach().catch(() => {});
+    // Do not close the reused SO7O WebView page or the browser itself.
+    await browser?.disconnect().catch(() => {});
+    releaseRequest();
   }
   return redirectedUrl;
 }
