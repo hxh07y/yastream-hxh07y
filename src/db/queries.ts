@@ -211,6 +211,7 @@ export async function upsertStream(rows: StreamInsert[]) {
       logger,
       `Failed to upsert streams ${row?.providerContentId}:${row?.season}:${row?.episode}`,
     );
+    throw e;
   }
 }
 
