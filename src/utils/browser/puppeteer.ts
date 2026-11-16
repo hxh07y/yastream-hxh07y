@@ -78,30 +78,37 @@ export async function getPuppeteerRequest(
   cookies?: any,
   userAgent?: string,
 ) {
-  const browser = await getBrowser();
-  browser.setCookie(...(cookies || []));
-  const page = await browser.newPage();
-  let html = "";
-  page.setUserAgent({ userAgent: userAgent || ENV.USER_AGENT });
-  try {
-    await page.goto(url, {
-      waitUntil: "networkidle0",
-      timeout: 5000,
-    });
-    html = await page.content();
-    // await page.evaluate(() => {
-    //   const script = document.querySelector("script");
-    //   if (!script) return;
-    //   script();
-    // });
-    // await page.waitForSelector('div[class^="z_81fjv"]');
-  } catch (error) {
-    console.error(error);
-  } finally {
-    await page.close();
-    await browser.disconnect();
-  }
-  return html;
+  const request = async () => {
+    const browser = await getBrowser();
+    let page: Page | undefined;
+    const ownsPage = !ENV.PUPPETEER_CDP_HTTP_URL;
+    let html = "";
+    try {
+      browser.setCookie(...(cookies || []));
+      if (ownsPage) {
+        page = await browser.newPage();
+      } else {
+        const pages = await browser.pages();
+        page = pages[0];
+        if (!page) throw new Error("SO7O CDP did not expose an existing WebView page");
+      }
+      page.setUserAgent({ userAgent: userAgent || ENV.USER_AGENT });
+      await page.goto(url, {
+        waitUntil: "networkidle0",
+        timeout: 5000,
+      });
+      html = await page.content();
+    } catch (error) {
+      console.error(error);
+    } finally {
+      if (page && ownsPage) await page.close().catch(() => {});
+      await browser.disconnect().catch(() => {});
+    }
+    return html;
+  };
+  return ENV.PUPPETEER_CDP_HTTP_URL
+    ? withCdpPageLock(request)
+    : request();
 }
 // export async function getPuppeteerRequest(
 //   url: string,
