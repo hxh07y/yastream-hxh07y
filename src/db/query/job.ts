@@ -11,6 +11,7 @@ export async function insertJobs(jobs: EJobInsert[]) {
     await db.insert(job).values(jobs);
   } catch (e) {
     handleError(e, logger, `Failed to insert job ${jobs[0]?.id}`);
+    throw e;
   }
 }
 export async function upsertJobs(jobs: EJobInsert[]) {
@@ -28,6 +29,7 @@ export async function upsertJobs(jobs: EJobInsert[]) {
       });
   } catch (e) {
     handleError(e, logger, `Failed to upsert job`);
+    throw e;
   }
 }
 
