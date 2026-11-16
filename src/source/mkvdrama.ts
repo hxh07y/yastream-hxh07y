@@ -807,7 +807,11 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
     return;
   }
 
-  private async getMkvdramaRedirectedUrlCDP(
+  private getMkvdramaRedirectedUrlCDP(targetUrl: string): Promise<string | null> {
+    return withCdpPageLock(() => this.getMkvdramaRedirectedUrlCDPLocked(targetUrl));
+  }
+
+  private async getMkvdramaRedirectedUrlCDPLocked(
     targetUrl: string,
   ): Promise<string | null> {
     const browser = await getBrowser();
@@ -910,7 +914,11 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
     }
   }
 
-  private async getMkvdramaOuoFinalUrlCDP(
+  private getMkvdramaOuoFinalUrlCDP(targetUrl: string): Promise<string | undefined> {
+    return withCdpPageLock(() => this.getMkvdramaOuoFinalUrlCDPLocked(targetUrl));
+  }
+
+  private async getMkvdramaOuoFinalUrlCDPLocked(
     targetUrl: string,
   ): Promise<string | undefined> {
     const browser = await getBrowser();
