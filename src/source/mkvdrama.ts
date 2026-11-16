@@ -217,6 +217,9 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
           case JOB_STATUS.PENDING:
             break;
           case JOB_STATUS.FAILED:
+          case JOB_STATUS.DONE:
+            // No DB streams were found for the requested episode. A previous
+            // run may have been marked done before its writes completed.
             await retryJob({
               id: jobId,
               status: JOB_STATUS.PENDING,
@@ -721,7 +724,7 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
         this.name,
       );
       await upsertOuosPromise;
-      upsertMkvdramas(
+      await upsertMkvdramas(
         ouos.map((ouo) => {
           return {
             id: uuidv7(),
@@ -786,10 +789,15 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
       }),
     );
     const streams = streamRows.flat().filter((stream) => stream !== undefined);
+    if (streams.length === 0) {
+      throw new MkvdramaError("No streams extracted from MKVDrama links");
+    }
     const streamMap = Object.groupBy(streams, (stream) => stream.episode);
-    Object.values(streamMap).forEach((episodeStreams) => {
-      if (episodeStreams) upsertStream(episodeStreams.flat());
-    });
+    await Promise.all(
+      Object.values(streamMap).map(async (episodeStreams) => {
+        if (episodeStreams) await upsertStream(episodeStreams.flat());
+      }),
+    );
     return;
   }
 
