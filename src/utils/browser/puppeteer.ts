@@ -203,22 +203,30 @@ export async function postRedirectedUrlCDP(
 
     // for (const link of cLinks) {
     let redirectLocation: string | undefined;
+    let postSubmitted = false;
     const changeToPost: Handler<any> = (interceptRequest) => {
-      var data = {
-        method: "POST",
-        postData: postData,
-      };
-      interceptRequest.continue(data);
+      // Only convert the intended top-level navigation into the download form POST.
+      // All scripts, stylesheets, and redirect follow-up requests must remain GETs.
+      if (
+        !postSubmitted &&
+        interceptRequest.isNavigationRequest() &&
+        interceptRequest.url() === formActionUrl
+      ) {
+        postSubmitted = true;
+        void interceptRequest.continue({
+          method: "POST",
+          postData: postData || "",
+        });
+        return;
+      }
+      void interceptRequest.continue();
     };
     const onRequestSent: Handler<any> = (params) => {
-      // Capture redirect response Location header
-      logger.trace(`onRequestSent params ${params.documentURL}`);
-      // Also capture any request to an external domain (follow-up after redirect)
-      // Request modified... finish sending!
+      // Only consider document navigations; subresources must never be mistaken
+      // for the final downloadable file URL.
       const reqUrl = params.request?.url || "";
-
-      logger.trace(`reqUrl ${reqUrl}`);
       if (
+        params.type === "Document" &&
         reqUrl.startsWith("http") &&
         !NOT_FINAL_HOSTS.some((host) => reqUrl.includes(host))
       ) {
@@ -227,31 +235,30 @@ export async function postRedirectedUrlCDP(
           if (redirectLocation) redirectedUrl = redirectLocation;
         }
       }
-      return;
     };
 
     page.on("request", changeToPost);
     client.on("Network.requestWillBeSent", onRequestSent);
     logger.trace(`on request: ${formActionUrl}`);
     try {
-      // Trigger a navigation to the _c/ URL via fetch (it will fail due to CORS,
-      // but CDP captures the redirect before the CORS error)
       await page.goto(formActionUrl, {
         waitUntil: "domcontentloaded",
         timeout: 10000,
       });
-      // // Brief wait for CDP events to arrive
       await new Promise((r) => setTimeout(r, 500));
     } catch (error) {
       handleError(error, logger, `Fail post CDP request ${targetUrl}`);
+    } finally {
+      page.off("request", changeToPost);
+      client.off("Network.requestWillBeSent", onRequestSent);
+      await page.close().catch(() => {});
+      await client.detach().catch(() => {});
     }
-    // client.off("Network.requestWillBeSent", onRequestSent);
     logger.trace(`off request: ${targetUrl}`);
     if (redirectLocation) {
       logger.log(`redirected (CDP): ${targetUrl} → ${redirectLocation}`);
       return redirectLocation;
     }
-    await page.close();
   } catch (cdpErr) {
     logger.error(`CDP resolution failed: ${cdpErr}`);
   } finally {
