@@ -170,24 +170,31 @@ const NOT_FINAL_HOSTS = [
   "turnstile",
 ];
 
-// SO7O's WebView CDP bridge does not support Target.createTarget. Serialize
-// these operations and reuse its existing page instead of asking Chromium for a new tab.
-let postRedirectedUrlCdpQueue: Promise<void> = Promise.resolve();
+// SO7O exposes one shared WebView page. Every operation that navigates or
+// inspects that page must hold this lock for its full lifetime.
+let cdpPageQueue: Promise<void> = Promise.resolve();
 
-export async function postRedirectedUrlCDP(
+export async function withCdpPageLock<T>(operation: () => Promise<T>): Promise<T> {
+  const previousOperation = cdpPageQueue;
+  let releaseOperation!: () => void;
+  cdpPageQueue = new Promise<void>((resolve) => {
+    releaseOperation = resolve;
+  });
+  await previousOperation;
+  try {
+    return await operation();
+  } finally {
+    releaseOperation();
+  }
+}
+
+async function postRedirectedUrlCDPLocked(
   targetUrl: string,
   postData?: string,
   cookies?: CookieData[],
   userAgent?: string,
   formSelector?: string,
 ) {
-  const previousRequest = postRedirectedUrlCdpQueue;
-  let releaseRequest!: () => void;
-  postRedirectedUrlCdpQueue = new Promise<void>((resolve) => {
-    releaseRequest = resolve;
-  });
-  await previousRequest;
-
   let redirectedUrl = "";
   let browser: Awaited<ReturnType<typeof getBrowser>> | undefined;
   let page: Page | undefined;
@@ -352,9 +359,20 @@ export async function postRedirectedUrlCDP(
     await client?.detach().catch(() => {});
     // Do not close the reused SO7O WebView page or the browser itself.
     await browser?.disconnect().catch(() => {});
-    releaseRequest();
   }
   return redirectedUrl;
+}
+
+export function postRedirectedUrlCDP(
+  targetUrl: string,
+  postData?: string,
+  cookies?: CookieData[],
+  userAgent?: string,
+  formSelector?: string,
+) {
+  return withCdpPageLock(() =>
+    postRedirectedUrlCDPLocked(targetUrl, postData, cookies, userAgent, formSelector),
+  );
 }
 
 /**
