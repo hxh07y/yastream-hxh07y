@@ -810,14 +810,16 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
       // Link 1 may already have navigated the shared tab to ouo.press.
       const targetHost = new URL(this.baseUrl).hostname;
       const pages = await browser.pages();
-      page = pages.find((candidate) => {
-        try {
-          const hostname = new URL(candidate.url()).hostname;
-          return hostname === targetHost || OUO_HOSTS.includes(hostname);
-        } catch {
-          return false;
-        }
-      });
+      page =
+        pages.find((candidate) => {
+          try {
+            const hostname = new URL(candidate.url()).hostname;
+            return hostname === targetHost || OUO_HOSTS.includes(hostname);
+          } catch {
+            return false;
+          }
+        }) ||
+        pages.find((candidate) => candidate.url() !== "about:blank");
       if (!page) {
         throw new MkvdramaError("No existing MKVDrama/OUO browser tab for redirect");
       }
@@ -896,17 +898,19 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
       const pages = await browser.pages();
       // Link 1 may have left the shared tab on ouo.press before Link 2 runs.
       // Reuse that same tab rather than requiring it to remain on MKVDrama.
-      page = pages.find((candidate) => {
-        try {
-          const hostname = new URL(candidate.url()).hostname;
-          return (
-            matchesHost(candidate.url(), MKVDRAMA_HOST) ||
-            OUO_HOSTS.includes(hostname)
-          );
-        } catch {
-          return false;
-        }
-      });
+      page =
+        pages.find((candidate) => {
+          try {
+            const hostname = new URL(candidate.url()).hostname;
+            return (
+              matchesHost(candidate.url(), MKVDRAMA_HOST) ||
+              OUO_HOSTS.includes(hostname)
+            );
+          } catch {
+            return false;
+          }
+        }) ||
+        pages.find((candidate) => candidate.url() !== "about:blank");
       if (!page) {
         throw new MkvdramaError("No existing SO7O browser tab for OUO redirect");
       }
