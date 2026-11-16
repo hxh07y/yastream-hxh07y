@@ -623,6 +623,9 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
         const ouo = mkvdrama.ouo;
         if (ouo) ouos.push({ ...ouo, quality: mkvdrama.quality as Quality });
       });
+      // A single OUO ID must only be processed once, even if legacy rows
+      // or joined results contain the same mirror more than once.
+      ouos = [...new Map(ouos.map((ouo) => [ouo.id, ouo])).values()];
     }
 
     if (ouos.length === 0) {
@@ -700,9 +703,13 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
           });
         }
       }
-      redirects.forEach((redirect) => {
-        if (redirect) ouos.push(redirect);
-      });
+      // Link 1 and Link 2 can resolve to the same OUO short URL/ID.
+      // Keep one record per OUO ID before any database writes.
+      ouos = [
+        ...new Map(
+          redirects.map((redirect) => [redirect.id, redirect]),
+        ).values(),
+      ];
       if (ouos.length === 0) throw new OuoError("No ouo links found");
       const upsertOuosPromise = upsertOuos(ouos);
 
