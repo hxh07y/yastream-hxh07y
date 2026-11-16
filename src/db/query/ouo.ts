@@ -20,6 +20,7 @@ export async function upsertOuos(ouos: EOuoInsert[]) {
       });
   } catch (e) {
     handleError(e, logger, `Failed to upsert ouo`);
+    throw e;
   }
 }
 
