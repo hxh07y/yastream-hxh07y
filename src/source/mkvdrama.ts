@@ -35,7 +35,11 @@ import {
   FlareSolverrResponse,
   getFlareSolverr,
 } from "../utils/browser/flaresolverr.js";
-import { getBrowser, getRedirectedUrlCDP } from "../utils/browser/puppeteer.js";
+import {
+  getBrowser,
+  getRedirectedUrlCDP,
+  withCdpPageLock,
+} from "../utils/browser/puppeteer.js";
 import { cache, TTL_MS } from "../utils/cache.js";
 import { ENV } from "../utils/env.js";
 import {
@@ -354,70 +358,72 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
       let response: FlareSolverrResponse | null = null;
 
       if (ENV.PUPPETEER_CDP_HTTP_URL) {
-        // Reuse the verified SO7O browser session for the detail page too.
-        const browser = await getBrowser();
-        try {
-          const targetHost = new URL(url).hostname;
-          const pages = await browser.pages();
-          const page = pages.find((candidate) => {
-            try {
-              return new URL(candidate.url()).hostname === targetHost;
-            } catch {
+        // Hold the shared SO7O page lock until the detail HTML and metadata are
+        // fully read; otherwise another provider can replace this page mid-scrape.
+        const detailResult = await withCdpPageLock(async () => {
+          const browser = await getBrowser();
+          try {
+            const targetHost = new URL(url).hostname;
+            const pages = await browser.pages();
+            const page = pages.find((candidate) => {
+              try {
+                return new URL(candidate.url()).hostname === targetHost;
+              } catch {
+                return false;
+              }
+            });
+
+            if (!page) {
+              this.logger.error(
+                "MKVDrama detail page unavailable: no same-origin SO7O tab is open",
+              );
               return false;
             }
-          });
 
-          if (!page) {
-            this.logger.error(
-              "MKVDrama detail page unavailable: no same-origin SO7O tab is open",
+            const navigationResponse = await page.goto(url, {
+              waitUntil: "domcontentloaded",
+              timeout: 60000,
+            });
+            await page
+              .waitForSelector("div.soraddlx", { timeout: 20000 })
+              .catch(() => null);
+            const downloadSectionCount = await page.evaluate(
+              () => document.querySelectorAll("div.soraddlx").length,
             );
-            return null;
-          }
-
-          const navigationResponse = await page.goto(url, {
-            waitUntil: "domcontentloaded",
-            timeout: 60000,
-          });
-          // The heading is available before MKVDrama renders its download sections.
-          // Wait specifically for the quality blocks instead of allowing h1 to end the wait.
-          await page
-            .waitForSelector("div.soraddlx", { timeout: 20000 })
-            .catch(() => null);
-          const downloadSectionCount = await page.evaluate(
-            () => document.querySelectorAll("div.soraddlx").length,
-          );
-          this.logger.log(
-            `MKVDrama detail DOM ready | downloadSections=${downloadSectionCount} | url=${page.url()}`,
-          );
-
-          const html = await page.content();
-          const status = navigationResponse?.status() ?? 0;
-          if (status < 200 || status >= 400) {
-            this.logger.error(
-              `MKVDrama detail browser navigation failed | status=${status} | url=${page.url()}`,
+            this.logger.log(
+              `MKVDrama detail DOM ready | downloadSections=${downloadSectionCount} | url=${page.url()}`,
             );
-            return null;
-          }
 
-          const cookies = await page.cookies(url);
-          const userAgent = await page.evaluate(() => navigator.userAgent);
-          response = {
-            status: "ok",
-            solution: {
-              url: page.url(),
-              status,
-              response: html,
-              cookies,
-              userAgent,
-            },
-          };
-          this.logger.log(
-            `MKVDrama detail browser navigation succeeded | status=${status} | bytes=${Buffer.byteLength(html)}`,
-          );
-        } finally {
-          // SO7O owns this browser; disconnect without closing its tabs.
-          await browser.disconnect();
-        }
+            const html = await page.content();
+            const status = navigationResponse?.status() ?? 0;
+            if (status < 200 || status >= 400) {
+              this.logger.error(
+                `MKVDrama detail browser navigation failed | status=${status} | url=${page.url()}`,
+              );
+              return false;
+            }
+
+            const cookies = await page.cookies(url);
+            const userAgent = await page.evaluate(() => navigator.userAgent);
+            response = {
+              status: "ok",
+              solution: {
+                url: page.url(),
+                status,
+                response: html,
+                cookies,
+                userAgent,
+              },
+            };
+            this.logger.log(
+              `MKVDrama detail browser navigation succeeded | status=${status} | bytes=${Buffer.byteLength(html)}`,
+            );
+            return true;
+          } finally {
+            await browser.disconnect();
+          }
+        });
+        if (!detailResult) return null;
       } else {
         response = await getFlareSolverr(url, this.name, 10);
       }
