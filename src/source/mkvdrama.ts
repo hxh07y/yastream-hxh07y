@@ -922,71 +922,84 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
         this.logger.warn(`MKVDrama OUO navigation did not complete: ${error}`);
       });
 
-      // Allow the OUO page scripts/countdown to run before inspecting its
-      // next step. Log structure only; never expose hidden token/input values.
+      // Inspect the page, then wait for the user to complete Turnstile in
+      // the SO7O browser. Never submit an empty CAPTCHA response.
       await new Promise((resolve) => setTimeout(resolve, 2000));
       let currentUrl = page.url();
       if (matchesAnyHost(currentUrl, OUO_HOSTS)) {
-        const diagnostics = await page.evaluate(() => {
-          const forms = Array.from(document.forms).map((form) => ({
+        const diagnostics = await page.evaluate(() => ({
+          title: document.title,
+          url: location.href,
+          forms: Array.from(document.forms).map((form) => ({
             id: form.id || "",
             action: form.getAttribute("action") || "",
             method: (form.method || "get").toUpperCase(),
-            inputs: Array.from(form.elements)
+            inputNames: Array.from(form.elements)
               .filter((element): element is HTMLInputElement =>
                 element instanceof HTMLInputElement,
               )
-              .map((input) => ({
-                name: input.name || "",
-                type: input.type || "",
-                hasValue: Boolean(input.value),
-              })),
+              .map((input) => input.name || ""),
             buttons: Array.from(form.querySelectorAll("button, input[type=submit]"))
               .map((button) =>
                 (button.textContent || (button as HTMLInputElement).value || "")
                   .trim()
                   .slice(0, 80),
               ),
-          }));
-          const bodyText = (document.body?.innerText || "")
+          })),
+          bodyText: (document.body?.innerText || "")
             .replace(/\\s+/g, " ")
             .trim()
-            .slice(0, 500);
-          return {
-            title: document.title,
-            url: location.href,
-            forms,
-            bodyText,
-            buttons: Array.from(document.querySelectorAll("button"))
-              .map((button) => button.innerText.trim().slice(0, 80))
-              .filter(Boolean)
-              .slice(0, 20),
-          };
-        }).catch((error) => ({ inspectionError: String(error) }));
+            .slice(0, 500),
+        })).catch((error) => ({ inspectionError: String(error) }));
         this.logger.log(
           `MKVDrama OUO page diagnostics | ${JSON.stringify(diagnostics)}`,
         );
-        await page.evaluate(() => {
-          const form =
-            document.querySelector<HTMLFormElement>(
-              "#form-captcha, #form-go, #form-shorten",
-            );
-          if (form) form.requestSubmit();
-        }).catch(() => undefined);
+        this.logger.warn(
+          "MKVDrama OUO requires manual verification | complete the CAPTCHA in the SO7O browser tab",
+        );
       }
 
-      const deadline = Date.now() + 25000;
+      const deadline = Date.now() + 120000;
+      let submittedAfterVerification = false;
       while (Date.now() < deadline) {
         currentUrl = page.url();
         if (currentUrl && !matchesAnyHost(currentUrl, OUO_HOSTS)) {
           this.logger.log(`MKVDrama OUO resolved | url=${currentUrl}`);
           return currentUrl;
         }
+
+        if (!submittedAfterVerification && matchesAnyHost(currentUrl, OUO_HOSTS)) {
+          const captchaReady = await page.evaluate(() => {
+            const response = document.querySelector<HTMLInputElement>(
+              'input[name="cf-turnstile-response"]',
+            );
+            return Boolean(response?.value);
+          }).catch(() => false);
+
+          if (captchaReady) {
+            this.logger.log(
+              "MKVDrama OUO CAPTCHA response detected | submitting verified form",
+            );
+            submittedAfterVerification = true;
+            await page.evaluate(() => {
+              const form =
+                document.querySelector<HTMLFormElement>(
+                  "#form-captcha, #form-go, #form-shorten",
+                );
+              if (form) form.requestSubmit();
+            }).catch((error) => {
+              this.logger.warn(
+                `MKVDrama OUO verified form submission failed: ${error}`,
+              );
+            });
+          }
+        }
+
         await new Promise((resolve) => setTimeout(resolve, 500));
       }
 
       this.logger.warn(
-        `MKVDrama OUO did not leave shortener page | url=${page.url()}`,
+        `MKVDrama OUO manual verification timed out | url=${page.url()}`,
       );
       return undefined;
     } finally {
