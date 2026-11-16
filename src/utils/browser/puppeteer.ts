@@ -236,6 +236,7 @@ export async function postRedirectedUrlCDP(
         interceptRequest.url() === formActionUrl
       ) {
         postSubmitted = true;
+        logger.log(`Send POST submitted | ${interceptRequest.url()} | bodyLength=${(postData || "").length}`);
         void interceptRequest.continue({
           method: "POST",
           postData: postData || "",
@@ -245,9 +246,28 @@ export async function postRedirectedUrlCDP(
       void interceptRequest.continue();
     };
     const onRequestSent: Handler<any> = (params) => {
-      // Only consider document navigations; subresources must never be mistaken
-      // for the final downloadable file URL.
       const reqUrl = params.request?.url || "";
+      if (params.type === "Document" || params.redirectResponse) {
+        const redirectResponse = params.redirectResponse;
+        const locationHeader = redirectResponse?.headers
+          ? Object.entries(redirectResponse.headers).find(
+              ([name]) => name.toLowerCase() === "location",
+            )?.[1]
+          : undefined;
+        logger.log(
+          `Send CDP request | type=${params.type || "unknown"} | method=${params.request?.method || "unknown"} | url=${reqUrl} | redirectStatus=${redirectResponse?.status ?? "none"} | location=${locationHeader || "none"}`,
+        );
+        if (locationHeader && typeof locationHeader === "string") {
+          try {
+            redirectLocation = new URL(locationHeader, reqUrl).toString();
+            redirectedUrl = redirectLocation;
+          } catch {
+            // Keep diagnostics even if the redirect Location is malformed.
+          }
+        }
+      }
+
+      // Preserve the original document URL capture as a fallback.
       if (
         params.type === "Document" &&
         reqUrl.startsWith("http") &&
@@ -259,9 +279,26 @@ export async function postRedirectedUrlCDP(
         }
       }
     };
+    const onResponseReceived: Handler<any> = (params) => {
+      const response = params.response;
+      if (params.type !== "Document" && !response?.url?.includes("send.now")) {
+        return;
+      }
+      const headers = response?.headers || {};
+      const locationHeader = Object.entries(headers).find(
+        ([name]) => name.toLowerCase() === "location",
+      )?.[1];
+      const dispositionHeader = Object.entries(headers).find(
+        ([name]) => name.toLowerCase() === "content-disposition",
+      )?.[1];
+      logger.log(
+        `Send CDP response | type=${params.type || "unknown"} | status=${response?.status ?? "unknown"} | url=${response?.url || "unknown"} | location=${locationHeader || "none"} | disposition=${dispositionHeader || "none"}`,
+      );
+    };
 
     page.on("request", changeToPost);
     client.on("Network.requestWillBeSent", onRequestSent);
+    client.on("Network.responseReceived", onResponseReceived);
     logger.trace(`on request: ${formActionUrl}`);
     try {
       await page.goto(formActionUrl, {
@@ -274,6 +311,8 @@ export async function postRedirectedUrlCDP(
     } finally {
       page.off("request", changeToPost);
       client.off("Network.requestWillBeSent", onRequestSent);
+      client.off("Network.responseReceived", onResponseReceived);
+      logger.log(`Send POST result | submitted=${postSubmitted} | pageUrl=${page.url()} | capturedUrl=${redirectLocation || "none"}`);
     }
 
     logger.trace(`off request: ${targetUrl}`);
