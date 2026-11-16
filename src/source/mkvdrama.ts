@@ -1047,17 +1047,23 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
         try {
           const targetHost = new URL(url).hostname;
           const pages = await browser.pages();
-          const page = pages.find((candidate) => {
-            try {
-              return new URL(candidate.url()).hostname === targetHost;
-            } catch {
-              return false;
-            }
-          });
+          const page =
+            pages.find((candidate) => {
+              try {
+                return new URL(candidate.url()).hostname === targetHost;
+              } catch {
+                return false;
+              }
+            }) ||
+            // The shared SO7O tab may have been left on OUO or a hoster page
+            // by the previous stream-resolution attempt. Reuse it and navigate
+            // back to MKVDrama instead of requiring its current URL to match.
+            pages.find((candidate) => candidate.url() !== "about:blank");
 
           if (!page) {
+            const availableTabs = pages.map((candidate) => candidate.url());
             this.logger.warn(
-              "MKVDrama direct fetch was challenged and no same-origin SO7O tab is open",
+              `MKVDrama direct fetch was challenged and no reusable SO7O tab is open | tabs=${JSON.stringify(availableTabs)}`,
             );
             return null;
           }
