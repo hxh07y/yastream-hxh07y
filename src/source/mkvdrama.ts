@@ -360,7 +360,7 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
       if (ENV.PUPPETEER_CDP_HTTP_URL) {
         // Hold the shared SO7O page lock until the detail HTML and metadata are
         // fully read; otherwise another provider can replace this page mid-scrape.
-        const detailResult = await withCdpPageLock(async () => {
+        const detailResult = await withCdpPageLock("MKVDrama detail scrape", async () => {
           const browser = await getBrowser();
           try {
             const targetHost = new URL(url).hostname;
@@ -808,7 +808,7 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
   }
 
   private getMkvdramaRedirectedUrlCDP(targetUrl: string): Promise<string | null> {
-    return withCdpPageLock(() => this.getMkvdramaRedirectedUrlCDPLocked(targetUrl));
+    return withCdpPageLock("MKVDrama link redirect", () => this.getMkvdramaRedirectedUrlCDPLocked(targetUrl));
   }
 
   private async getMkvdramaRedirectedUrlCDPLocked(
@@ -915,7 +915,7 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
   }
 
   private getMkvdramaOuoFinalUrlCDP(targetUrl: string): Promise<string | undefined> {
-    return withCdpPageLock(() => this.getMkvdramaOuoFinalUrlCDPLocked(targetUrl));
+    return withCdpPageLock("MKVDrama OUO resolution", () => this.getMkvdramaOuoFinalUrlCDPLocked(targetUrl));
   }
 
   private async getMkvdramaOuoFinalUrlCDPLocked(
@@ -1123,7 +1123,7 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
       if (challenge || lower.includes("cloudflare")) {
         // Axios cannot pass MKVDrama's browser verification. Reuse the
         // already verified same-origin SO7O tab and fetch without navigating it.
-        return await withCdpPageLock(async () => {
+        return await withCdpPageLock("MKVDrama challenged-page fallback", async () => {
           const browser = await getBrowser();
           try {
             const targetHost = new URL(url).hostname;
