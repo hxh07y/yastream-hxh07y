@@ -382,28 +382,34 @@ export function postRedirectedUrlCDP(
  * @param userAgent
  * @returns redirectedUrl
  */
-export async function getRedirectedUrlCDP(
+async function getRedirectedUrlCDPLocked(
   targetUrl: string,
   cookies?: CookieData[],
   userAgent?: string,
 ) {
   let redirectedUrl: string | null = "";
   const browser = await getBrowser();
-  if (cookies) browser.setCookie(...cookies);
+  let page: Page | undefined;
+  let client: Awaited<ReturnType<Page["createCDPSession"]>> | undefined;
+  const ownsPage = !ENV.PUPPETEER_CDP_HTTP_URL;
   try {
-    const page: Page = await browser.newPage();
+    if (cookies) browser.setCookie(...cookies);
+    if (ownsPage) {
+      page = await browser.newPage();
+    } else {
+      const pages = await browser.pages();
+      page = pages[0];
+      if (!page) throw new Error("SO7O CDP did not expose an existing WebView page");
+    }
     page.setUserAgent({ userAgent: userAgent || ENV.USER_AGENT });
-    const client = await page.createCDPSession();
+    client = await page.createCDPSession();
     await client.send("Network.enable");
     let redirectLocation: string | undefined;
     const onRequestSent: Handler<any> = (params) => {
-      // Capture redirect response Location header
       logger.trace(`onRequestSent params ${params.documentURL}`);
-      // Also capture any request to an external domain (follow-up after redirect)
       const reqUrl = params.request?.url || "";
       logger.log(`reqUrl ${reqUrl}`);
 
-      // MKVDrama redirects its episode link to a same-domain /c/ host-list page.
       if (reqUrl.startsWith("http") && matchesHost(reqUrl, MKVDRAMA_HOST)) {
         try {
           if (new URL(reqUrl).pathname.startsWith("/c/")) {
@@ -420,7 +426,6 @@ export async function getRedirectedUrlCDP(
         reqUrl.startsWith("http") &&
         !NOT_FINAL_HOSTS.some((host) => reqUrl.includes(host))
       ) {
-        logger.trace(`redirectLocation ${redirectLocation}`);
         if (!redirectLocation) {
           redirectLocation = reqUrl.split("?__cf_chl")[0];
           if (redirectLocation) redirectedUrl = redirectLocation;
@@ -430,37 +435,44 @@ export async function getRedirectedUrlCDP(
         redirectLocation = params.documentURL;
         return;
       }
-      return;
     };
 
     client.on("Network.requestWillBeSent", onRequestSent);
     logger.trace(`on request: ${targetUrl}`);
     try {
-      // Trigger a navigation to the _c/ URL via fetch (it will fail due to CORS,
-      // but CDP captures the redirect before the CORS error)
       await page.goto(targetUrl, {
         waitUntil: "load",
         timeout: ENV.PUPPETEER_TIMEOUT_MS,
       });
-      // Brief wait for CDP events to arrive
-      await new Promise((r) => setTimeout(r, 500));
+      await new Promise((resolve) => setTimeout(resolve, 500));
     } catch (error) {
       handleError(error, logger, `Fail CDP request ${targetUrl}`);
+    } finally {
+      client.off("Network.requestWillBeSent", onRequestSent);
     }
-    client.off("Network.requestWillBeSent", onRequestSent);
     logger.trace(`off request: ${targetUrl}`);
     if (redirectLocation) {
       logger.log(`redirected (CDP): ${targetUrl} → ${redirectLocation}`);
       return redirectLocation;
     }
-
-    await client.detach().catch(() => {});
   } catch (cdpErr) {
     logger.error(`CDP resolution failed: ${cdpErr}`);
   } finally {
-    await browser.disconnect();
+    await client?.detach().catch(() => {});
+    if (page && ownsPage) await page.close().catch(() => {});
+    await browser.disconnect().catch(() => {});
   }
   return redirectedUrl ? redirectedUrl : null;
+}
+
+export function getRedirectedUrlCDP(
+  targetUrl: string,
+  cookies?: CookieData[],
+  userAgent?: string,
+) {
+  return withCdpPageLock(() =>
+    getRedirectedUrlCDPLocked(targetUrl, cookies, userAgent),
+  );
 }
 
 // export async function scrapeWithRemoteBrowser(
