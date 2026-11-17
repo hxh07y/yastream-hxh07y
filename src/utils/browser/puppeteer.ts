@@ -220,8 +220,10 @@ async function postRedirectedUrlCDPLocked(
   cookies?: CookieData[],
   userAgent?: string,
   formSelector?: string,
+  preferMediaSource = false,
 ) {
   let redirectedUrl = "";
+  let mediaSourceUrl = "";
   let browser: Awaited<ReturnType<typeof getBrowser>> | undefined;
   let page: Page | undefined;
   let client: Awaited<ReturnType<Page["createCDPSession"]>> | undefined;
@@ -354,6 +356,18 @@ async function postRedirectedUrlCDPLocked(
       page.off("framenavigated", onMainFrameNavigated);
       client.off("Network.requestWillBeSent", onRequestSent);
       client.off("Network.responseReceived", onResponseReceived);
+      if (preferMediaSource) {
+        mediaSourceUrl = await page.evaluate(() => {
+          const video = document.querySelector("video");
+          const source = video?.currentSrc || video?.querySelector("source")?.src || "";
+          return source.startsWith("http://") || source.startsWith("https://")
+            ? source
+            : "";
+        }).catch((error) => {
+          logger.warn(`Unable to read Send video source: ${error}`);
+          return "";
+        });
+      }
       const pageDiagnostics = await page.evaluate(() => ({
         title: document.title,
         forms: Array.from(document.forms).map((form) => ({
@@ -381,6 +395,10 @@ async function postRedirectedUrlCDPLocked(
     }
 
     logger.trace(`off request: ${targetUrl}`);
+    if (preferMediaSource && mediaSourceUrl) {
+      logger.log(`Send media source captured: ${mediaSourceUrl}`);
+      return mediaSourceUrl;
+    }
     if (redirectLocation) {
       logger.log(`redirected (CDP): ${targetUrl} → ${redirectLocation}`);
       return redirectLocation;
@@ -404,9 +422,10 @@ export function postRedirectedUrlCDP(
   cookies?: CookieData[],
   userAgent?: string,
   formSelector?: string,
+  preferMediaSource = false,
 ) {
   return withCdpPageLock("postRedirectedUrlCDP", () =>
-    postRedirectedUrlCDPLocked(targetUrl, postData, cookies, userAgent, formSelector),
+    postRedirectedUrlCDPLocked(targetUrl, postData, cookies, userAgent, formSelector, preferMediaSource),
   );
 }
 
