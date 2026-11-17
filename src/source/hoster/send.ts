@@ -54,7 +54,14 @@ export async function getSendDownloadUrl(url: string, config: UserConfig) {
   }
   logger.log(`Send media URL resolved | sourceHost=${sourceHost}`);
 
-  const playbackUrl = getMediaflowproxyTranscodeUrl(streamUrl, config);
+  let playbackUrl = getMediaflowproxyTranscodeUrl(streamUrl, config);
+  if (config.mfpUrl) {
+    // Send's delivery host may require the original share page as the media Referer.
+    // MFP maps h_referer to the outbound source request's Referer header.
+    const output = new URL(playbackUrl);
+    output.searchParams.set("h_referer", url);
+    playbackUrl = output.toString();
+  }
   try {
     const output = new URL(playbackUrl);
     logger.log(`Send playback URL generated | host=${output.hostname} | path=${output.pathname} | mfp=${Boolean(config.mfpUrl)}`);
