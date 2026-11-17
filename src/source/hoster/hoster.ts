@@ -178,8 +178,6 @@ export async function getHosterDownloadUrl(url: string, config: UserConfig) {
         return getSendDownloadUrl(url, config);
       }
       return "";
-    case Hoster.FILEDITCH:
-      return url;
     case Hoster.GOFILE:
       return "";
     case Hoster.MEGA:
