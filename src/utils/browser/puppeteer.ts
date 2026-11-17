@@ -388,27 +388,6 @@ async function postRedirectedUrlCDPLocked(
       });
       await new Promise((resolve) => setTimeout(resolve, 500));
 
-      if (preferMediaSource) {
-        const playProbe = await page.evaluate(async () => {
-          const video = document.querySelector("video");
-          if (!video) return "no-video-element";
-          video.muted = true;
-          try {
-            await video.play();
-            return "play-started";
-          } catch (error) {
-            return `play-rejected: ${error instanceof Error ? error.message : String(error)}`;
-          }
-        }).catch((error) => `play-probe-error: ${String(error)}`);
-        logger.log(`Send playback probe | result=${playProbe}`);
-
-        // Keep CDP listeners active while the player initiates its media request.
-        await new Promise((resolve) => setTimeout(resolve, 6000));
-        await page.evaluate(() => {
-          const video = document.querySelector("video");
-          if (video && !video.paused) video.pause();
-        }).catch(() => {});
-      }
     } catch (error) {
       handleError(error, logger, `Fail post CDP request ${targetUrl}`);
     } finally {
