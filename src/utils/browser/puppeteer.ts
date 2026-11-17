@@ -321,12 +321,12 @@ async function postRedirectedUrlCDPLocked(
         let displayUrl = reqUrl;
         try {
           const parsedUrl = new URL(reqUrl);
-          displayUrl = `${parsedUrl.origin}${parsedUrl.pathname}`;
+          displayUrl = safeUrlLabel(reqUrl);
         } catch {
           // Keep the original URL if parsing fails.
         }
         logger.log(
-          `Send CDP request | type=${params.type || "unknown"} | method=${params.request?.method || "unknown"} | url=${displayUrl} | headers=${JSON.stringify(safeHeaders)} | redirectStatus=${redirectResponse?.status ?? "none"} | location=${locationHeader || "none"}`,
+          `Send CDP request | type=${params.type || "unknown"} | method=${params.request?.method || "unknown"} | url=${displayUrl} | headers=${JSON.stringify(safeHeaders)} | redirectStatus=${redirectResponse?.status ?? "none"} | location=${locationHeader ? safeUrlLabel(new URL(locationHeader, reqUrl).toString()) : "none"}`,
         );
         if (locationHeader && typeof locationHeader === "string") {
           try {
@@ -371,7 +371,7 @@ async function postRedirectedUrlCDPLocked(
       let displayUrl = responseUrl;
       try {
         const parsedUrl = new URL(responseUrl);
-        displayUrl = `${parsedUrl.origin}${parsedUrl.pathname}`;
+        displayUrl = safeUrlLabel(responseUrl);
       } catch {
         // Keep the original URL if parsing fails.
       }
