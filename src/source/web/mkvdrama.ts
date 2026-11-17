@@ -52,7 +52,7 @@ async function getUrlsFromMkvdramaCDP(url: string) {
       let page: (typeof matchingPages)[number] | undefined;
       for (const candidate of matchingPages) {
         const itemCount = await candidate
-          .$eval("li[data-i]", (items) => items.length)
+          .$$eval("li[data-i]", (items) => items.length)
           .catch(() => 0);
         if (itemCount > 0) {
           page = candidate;
