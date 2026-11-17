@@ -11,6 +11,17 @@ import { handleError } from "../error.js";
 import { Logger } from "../logger.js";
 
 const logger = new Logger("PUPPETEER");
+
+function safeUrlLabel(value: string) {
+  try {
+    const url = new URL(value);
+    const filename = url.pathname.split("/").filter(Boolean).pop() || "";
+    const safeFilename = /\\.(mkv|mp4|m3u8|mpd)$/i.test(filename) ? filename : "[path hidden]";
+    return `${url.hostname}/${safeFilename}`;
+  } catch {
+    return "[unavailable]";
+  }
+}
 const FINAL_HOSTS = [...OUO_HOSTS, PIXELDRAIN_HOST];
 
 export async function getBrowser() {
@@ -421,8 +432,8 @@ async function postRedirectedUrlCDPLocked(
             })),
         })),
         videoElements: Array.from(document.querySelectorAll("video")).map((video) => ({
-          src: video.src,
-          currentSrc: video.currentSrc,
+          src: video.src ? safeUrlLabel(video.src) : "",
+          currentSrc: video.currentSrc ? safeUrlLabel(video.currentSrc) : "",
           poster: video.poster,
           crossOrigin: video.crossOrigin,
           readyState: video.readyState,
@@ -453,13 +464,13 @@ async function postRedirectedUrlCDPLocked(
         bodyText: (document.body?.innerText || "").replace(/\\s+/g, " ").slice(0, 700),
       })).catch((error) => ({ diagnosticError: String(error) }));
       logger.log(
-        `Send POST result | submitted=${postSubmitted} | pageUrl=${page.url()} | capturedUrl=${redirectLocation || "none"} | page=${JSON.stringify(pageDiagnostics)}`,
+        `Send POST result | submitted=${postSubmitted} | pageUrl=${safeUrlLabel(page.url())} | capturedUrl=${redirectLocation ? safeUrlLabel(redirectLocation) : "none"} | page=${JSON.stringify(pageDiagnostics)}`,
       );
     }
 
     logger.trace(`off request: ${targetUrl}`);
     if (preferMediaSource && mediaSourceUrl) {
-      logger.log(`Send media source captured: ${mediaSourceUrl}`);
+      logger.log(`Send media source captured | source=${safeUrlLabel(mediaSourceUrl)}`);
       return mediaSourceUrl;
     }
     if (redirectLocation) {
