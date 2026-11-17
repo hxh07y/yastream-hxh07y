@@ -282,15 +282,40 @@ async function postRedirectedUrlCDPLocked(
     };
     const onRequestSent: Handler<any> = (params) => {
       const reqUrl = params.request?.url || "";
-      if (params.type === "Document" || params.redirectResponse) {
+      let isSendMediaRequest = false;
+      try {
+        const requestHost = new URL(reqUrl).hostname;
+        isSendMediaRequest =
+          requestHost === "send.now" ||
+          requestHost.endsWith(".send.now") ||
+          requestHost === "datatransfer.to" ||
+          requestHost.endsWith(".datatransfer.to");
+      } catch {
+        // Ignore non-URL requests.
+      }
+      if (params.type === "Document" || params.redirectResponse || isSendMediaRequest) {
         const redirectResponse = params.redirectResponse;
         const locationHeader = redirectResponse?.headers
           ? Object.entries(redirectResponse.headers).find(
               ([name]) => name.toLowerCase() === "location",
             )?.[1]
           : undefined;
+        const safeHeaders = Object.fromEntries(
+          Object.entries(params.request?.headers || {}).filter(([name]) =>
+            ["accept", "content-type", "range", "referer", "origin", "user-agent"].includes(
+              name.toLowerCase(),
+            ),
+          ),
+        );
+        let displayUrl = reqUrl;
+        try {
+          const parsedUrl = new URL(reqUrl);
+          displayUrl = `${parsedUrl.origin}${parsedUrl.pathname}`;
+        } catch {
+          // Keep the original URL if parsing fails.
+        }
         logger.log(
-          `Send CDP request | type=${params.type || "unknown"} | method=${params.request?.method || "unknown"} | url=${reqUrl} | redirectStatus=${redirectResponse?.status ?? "none"} | location=${locationHeader || "none"}`,
+          `Send CDP request | type=${params.type || "unknown"} | method=${params.request?.method || "unknown"} | url=${displayUrl} | headers=${JSON.stringify(safeHeaders)} | redirectStatus=${redirectResponse?.status ?? "none"} | location=${locationHeader || "none"}`,
         );
         if (locationHeader && typeof locationHeader === "string") {
           try {
@@ -316,18 +341,31 @@ async function postRedirectedUrlCDPLocked(
     };
     const onResponseReceived: Handler<any> = (params) => {
       const response = params.response;
-      if (params.type !== "Document" && !response?.url?.includes("send.now")) {
+      const responseUrl = response?.url || "";
+      if (
+        params.type !== "Document" &&
+        !responseUrl.includes("send.now") &&
+        !responseUrl.includes("datatransfer.to")
+      ) {
         return;
       }
       const headers = response?.headers || {};
-      const locationHeader = Object.entries(headers).find(
-        ([name]) => name.toLowerCase() === "location",
-      )?.[1];
-      const dispositionHeader = Object.entries(headers).find(
-        ([name]) => name.toLowerCase() === "content-disposition",
-      )?.[1];
+      const safeHeaders = Object.fromEntries(
+        Object.entries(headers).filter(([name]) =>
+          ["content-type", "content-length", "content-range", "accept-ranges", "location", "content-disposition"].includes(
+            name.toLowerCase(),
+          ),
+        ),
+      );
+      let displayUrl = responseUrl;
+      try {
+        const parsedUrl = new URL(responseUrl);
+        displayUrl = `${parsedUrl.origin}${parsedUrl.pathname}`;
+      } catch {
+        // Keep the original URL if parsing fails.
+      }
       logger.log(
-        `Send CDP response | type=${params.type || "unknown"} | status=${response?.status ?? "unknown"} | url=${response?.url || "unknown"} | location=${locationHeader || "none"} | disposition=${dispositionHeader || "none"}`,
+        `Send CDP response | type=${params.type || "unknown"} | status=${response?.status ?? "unknown"} | mimeType=${response?.mimeType || "unknown"} | url=${displayUrl} | headers=${JSON.stringify(safeHeaders)} | fromDiskCache=${Boolean(response?.fromDiskCache)} | fromServiceWorker=${Boolean(response?.fromServiceWorker)}`,
       );
     };
 
@@ -381,12 +419,36 @@ async function postRedirectedUrlCDPLocked(
               hasValue: Boolean((element as HTMLInputElement).value),
             })),
         })),
-        videoSources: Array.from(document.querySelectorAll("video, source"))
+        videoElements: Array.from(document.querySelectorAll("video")).map((video) => ({
+          src: video.src,
+          currentSrc: video.currentSrc,
+          poster: video.poster,
+          crossOrigin: video.crossOrigin,
+          readyState: video.readyState,
+          networkState: video.networkState,
+          error: video.error
+            ? { code: video.error.code, message: video.error.message }
+            : null,
+          duration: Number.isFinite(video.duration) ? video.duration : null,
+          attributes: Array.from(video.attributes).reduce<Record<string, string>>(
+            (result, attribute) => {
+              if (!["src", "poster"].includes(attribute.name.toLowerCase())) {
+                result[attribute.name] = attribute.value;
+              }
+              return result;
+            },
+            {},
+          ),
+        })),
+        mediaSources: Array.from(document.querySelectorAll("source"))
           .map((element) => ({
-            tag: element.tagName,
-            src: (element as HTMLMediaElement).src || element.getAttribute("src") || "",
+            src: (element as HTMLSourceElement).src,
+            type: (element as HTMLSourceElement).type,
           }))
           .filter((item) => Boolean(item.src)),
+        iframeSources: Array.from(document.querySelectorAll("iframe"))
+          .map((frame) => frame.src)
+          .filter(Boolean),
         bodyText: (document.body?.innerText || "").replace(/\\s+/g, " ").slice(0, 700),
       })).catch((error) => ({ diagnosticError: String(error) }));
       logger.log(
