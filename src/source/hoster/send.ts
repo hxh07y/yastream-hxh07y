@@ -31,6 +31,7 @@ export async function getSendDownloadUrl(url: string, config: UserConfig) {
 
   // Load the actual share page and submit its current form fields.
   // Send.now changes these fields over time, so avoid hardcoding an outdated POST body.
+  logger.log(`Resolving Send share | host=${new URL(url).hostname} | mfpConfigured=${Boolean(config.mfpUrl)}`);
   const streamUrl = await postRedirectedUrlCDP(
     url,
     undefined,
@@ -40,11 +41,28 @@ export async function getSendDownloadUrl(url: string, config: UserConfig) {
     true,
   );
   if (!streamUrl) {
-    logger.error(`Send download redirect was not found for file ID ${id}`);
+    logger.error(`Send resolver returned no media URL | fileId=${id}`);
     return "";
   }
 
-  return getMediaflowproxyTranscodeUrl(streamUrl, config);
+  let sourceHost = "unknown";
+  try {
+    sourceHost = new URL(streamUrl).hostname;
+  } catch {
+    logger.error("Send resolver returned a malformed media URL");
+    return "";
+  }
+  logger.log(`Send media URL resolved | sourceHost=${sourceHost}`);
+
+  const playbackUrl = getMediaflowproxyTranscodeUrl(streamUrl, config);
+  try {
+    const output = new URL(playbackUrl);
+    logger.log(`Send playback URL generated | host=${output.hostname} | path=${output.pathname} | mfp=${Boolean(config.mfpUrl)}`);
+  } catch {
+    logger.error("Send playback URL generation returned an invalid URL");
+    return "";
+  }
+  return playbackUrl;
 }
 
 // Not working
