@@ -300,7 +300,9 @@ async function postRedirectedUrlCDPLocked(
           requestHost === "send.now" ||
           requestHost.endsWith(".send.now") ||
           requestHost === "datatransfer.to" ||
-          requestHost.endsWith(".datatransfer.to");
+          requestHost.endsWith(".datatransfer.to") ||
+          requestHost === "usercdn.com" ||
+          requestHost.endsWith(".usercdn.com");
       } catch {
         // Ignore non-URL requests.
       }
@@ -356,14 +358,16 @@ async function postRedirectedUrlCDPLocked(
       if (
         params.type !== "Document" &&
         !responseUrl.includes("send.now") &&
-        !responseUrl.includes("datatransfer.to")
+        !responseUrl.includes("datatransfer.to") &&
+        !new URL(responseUrl).hostname.endsWith(".usercdn.com") &&
+        new URL(responseUrl).hostname !== "usercdn.com"
       ) {
         return;
       }
       const headers = response?.headers || {};
       const safeHeaders = Object.fromEntries(
         Object.entries(headers).filter(([name]) =>
-          ["content-type", "content-length", "content-range", "accept-ranges", "location", "content-disposition"].includes(
+          ["content-type", "content-length", "content-range", "accept-ranges", "content-disposition"].includes(
             name.toLowerCase(),
           ),
         ),
