@@ -29,10 +29,16 @@ export async function getSendDownloadUrl(url: string, config: UserConfig) {
     return "";
   }
 
-  const postData = `op=download2&id=${encodeURIComponent(id)}&rand=&referer=&download_a=CONTINUE`;
-  // Keep the form submission on the same host as the supplied share URL.
-  const sendOrigin = new URL(url).origin;
-  const streamUrl = await postRedirectedUrlCDP(`${sendOrigin}/`, postData, undefined, undefined, undefined, true);
+  // Load the actual share page and submit its current form fields.
+  // Send.now changes these fields over time, so avoid hardcoding an outdated POST body.
+  const streamUrl = await postRedirectedUrlCDP(
+    url,
+    undefined,
+    undefined,
+    undefined,
+    "form",
+    true,
+  );
   if (!streamUrl) {
     logger.error(`Send download redirect was not found for file ID ${id}`);
     return "";
