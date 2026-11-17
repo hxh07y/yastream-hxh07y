@@ -326,7 +326,7 @@ async function postRedirectedUrlCDPLocked(
           // Keep the original URL if parsing fails.
         }
         logger.log(
-          `Send CDP request | type=${params.type || "unknown"} | method=${params.request?.method || "unknown"} | url=${displayUrl} | headers=${JSON.stringify(safeHeaders)} | redirectStatus=${redirectResponse?.status ?? "none"} | location=${locationHeader ? safeUrlLabel(new URL(locationHeader, reqUrl).toString()) : "none"}`,
+          `Send CDP request | type=${params.type || "unknown"} | method=${params.request?.method || "unknown"} | url=${displayUrl} | headers=${JSON.stringify(safeHeaders)} | redirectStatus=${redirectResponse?.status ?? "none"} | location=${typeof locationHeader === "string" ? safeUrlLabel(new URL(locationHeader, reqUrl).toString()) : "none"}`,
         );
         if (locationHeader && typeof locationHeader === "string") {
           try {
