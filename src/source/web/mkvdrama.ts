@@ -35,7 +35,7 @@ async function getUrlsFromMkvdramaCDP(url: string) {
   return withCdpPageLock("MKVDrama host-list extraction", async () => {
     const target = new URL(url);
     const browser = await getBrowser();
-  
+
     try {
       const pages = await browser.pages();
       const matchingPages = pages.filter((candidate) => {
@@ -46,7 +46,7 @@ async function getUrlsFromMkvdramaCDP(url: string) {
           return false;
         }
       });
-  
+
       // Prefer the tab where the host list has actually rendered. A second tab
       // may still be showing a verification page for the same URL.
       let page: (typeof matchingPages)[number] | undefined;
@@ -59,7 +59,7 @@ async function getUrlsFromMkvdramaCDP(url: string) {
           break;
         }
       }
-  
+
       if (!page) {
         throw new MkvdramaError(
           matchingPages.length
@@ -67,7 +67,7 @@ async function getUrlsFromMkvdramaCDP(url: string) {
             : "MKVDrama host-list tab not found. Open the host-list link in SO7O, complete its human verification manually, wait for GET LINK, then retry.",
         );
       }
-  
+
       const result = await page.evaluate(() => {
         const records: {
           episode: string;
@@ -77,7 +77,7 @@ async function getUrlsFromMkvdramaCDP(url: string) {
         }[] = [];
         const originalDescriptor = Object.getOwnPropertyDescriptor(window, "open");
         const captured: string[] = [];
-  
+
         Object.defineProperty(window, "open", {
           configurable: true,
           writable: true,
@@ -86,17 +86,17 @@ async function getUrlsFromMkvdramaCDP(url: string) {
             return null;
           },
         });
-  
+
         try {
           document.querySelectorAll<HTMLLIElement>("li[data-i]").forEach((item) => {
             const button = item.querySelector<HTMLButtonElement>(".dl-btn");
             if (!button || button.disabled) return;
-  
+
             const before = captured.length;
             button.click();
             const destination = captured.length > before ? captured[captured.length - 1] : "";
             if (!destination) return;
-  
+
             records.push({
               episode: item.dataset.e || "",
               host: item.dataset.h || "",
@@ -111,27 +111,27 @@ async function getUrlsFromMkvdramaCDP(url: string) {
             Reflect.deleteProperty(window, "open");
           }
         }
-  
+
         return { itemCount: document.querySelectorAll("li[data-i]").length, records };
       });
-  
+
       if (!result.itemCount) {
         throw new MkvdramaError(
           "The MKVDrama host-list page has no link records. Make sure GET LINK is enabled in the SO7O tab, then retry.",
         );
       }
-  
+
       const urls: string[] = [];
       const episodes: EpisodeHoster[] = [];
-  
+
       for (const record of result.records) {
         const episodeMatch = record.episode.match(/E(\d+)/i);
         const ep = episodeMatch ? Number.parseInt(episodeMatch[1] || "", 10) : Number.NaN;
         if (!Number.isFinite(ep)) continue;
-  
+
         const hoster = getHosterFromUrl(record.url);
         if (!hoster) continue;
-  
+
         const sizeMatch = record.size.match(/[\d.]+/);
         const rawSize = sizeMatch ? Number.parseFloat(sizeMatch[0]) : Number.NaN;
         const size = Number.isFinite(rawSize)
@@ -139,22 +139,22 @@ async function getUrlsFromMkvdramaCDP(url: string) {
             ? (rawSize / 1024).toFixed(2)
             : rawSize.toFixed(2)
           : "";
-  
+
         urls.push(record.url);
         episodes.push({ ep, data: [{ hoster, size }] });
       }
-  
+
       if (!urls.length) {
         throw new MkvdramaError(
           "No supported host links were captured. Currently supported: Send.now/Send.cm, Pixeldrain, Gofile, and Fileditch Files.",
         );
       }
-  
+
       return { urls, episodes };
     } finally {
       // The browser belongs to SO7O; disconnect without closing it or its tabs.
       await browser.disconnect();
-      }
+    }
   });
 }
 
