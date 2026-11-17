@@ -4,7 +4,7 @@
 import * as cheerio from "cheerio";
 import { axiosGet } from "../../utils/axios.js";
 import { getFlareSolverr } from "../../utils/browser/flaresolverr.js";
-import { getBrowser } from "../../utils/browser/puppeteer.js";
+import { getBrowser, withCdpPageLock } from "../../utils/browser/puppeteer.js";
 import { ENV } from "../../utils/env.js";
 import { MKVDRAMA_ORIGIN } from "../../utils/constant.js";
 import { MkvdramaError } from "../../utils/error.js";
@@ -32,7 +32,8 @@ export async function getUrlsFromMkvdrama(url: string) {
 }
 
 async function getUrlsFromMkvdramaCDP(url: string) {
-  const target = new URL(url);
+  return withCdpPageLock("MKVDrama host-list extraction", async () => {
+    const target = new URL(url);
   const browser = await getBrowser();
 
   try {
@@ -153,7 +154,8 @@ async function getUrlsFromMkvdramaCDP(url: string) {
   } finally {
     // The browser belongs to SO7O; disconnect without closing it or its tabs.
     await browser.disconnect();
-  }
+    }
+  });
 }
 
 function getDlcUrl(html: string): string | undefined {
