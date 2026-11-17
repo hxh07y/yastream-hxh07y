@@ -162,6 +162,11 @@ export function getHosterFromUrl(url: string) {
 
 export async function getHosterDownloadUrl(url: string, config: UserConfig) {
   const hoster = getHosterFromUrl(url);
+  // FileDitch serves an interstitial page instead of a supported direct media URL.
+  // Exclude it before the TorBox branch so it cannot reappear as an unplayable stream.
+  if (hoster === Hoster.FILEDITCH) {
+    return "";
+  }
   if (hoster && config.tbKey) {
     return (await getTorboxStreamUrl(url, config)) || "";
   }
