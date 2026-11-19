@@ -390,19 +390,17 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
         const detailResult = await withCdpPageLock("MKVDrama detail scrape", async () => {
           const browser = await getBrowser();
           try {
-            const targetHost = new URL(url).hostname;
             const pages = await browser.pages();
-            const page = pages.find((candidate) => {
-              try {
-                return new URL(candidate.url()).hostname === targetHost;
-              } catch {
-                return false;
-              }
-            });
+            // SO7O exposes one shared WebView. It may currently be on OUO,
+            // Viewcrate, another provider, or about:blank; navigate that page
+            // instead of requiring it to already be on MKVDrama.
+            const page =
+              pages.find((candidate) => candidate.url() !== "about:blank") ||
+              pages[0];
 
             if (!page) {
               this.logger.error(
-                "MKVDrama detail page unavailable: no same-origin SO7O tab is open",
+                "MKVDrama detail page unavailable: SO7O exposes no WebView tab",
               );
               return false;
             }
