@@ -188,16 +188,46 @@ const NOT_FINAL_HOSTS = [
   "turnstile",
 ];
 
-// SO7O exposes one shared WebView page. Every operation that navigates or
-// inspects that page must hold this lock for its full lifetime.
+// SO7O exposes one shared WebView page. Short browser operations use this
+// mutex. Manual OUO CAPTCHA waits reserve the page separately, then release the
+// mutex so competing requests can fail fast instead of waiting for minutes.
 let cdpPageQueue: Promise<void> = Promise.resolve();
 let activeCdpPageOperation = "none";
 let cdpPageOperationSequence = 0;
+let cdpPageReservationSequence = 0;
+let cdpPageReservation: { id: string; operationName: string } | null = null;
+
+export function reserveCdpPageForManualVerification(operationName: string): string {
+  if (cdpPageReservation) {
+    throw new Error(
+      `SO7O CDP page is already reserved for ${cdpPageReservation.operationName}`,
+    );
+  }
+  const id = `verification-${++cdpPageReservationSequence}`;
+  cdpPageReservation = { id, operationName };
+  activeCdpPageOperation = `reserved:${operationName}`;
+  logger.warn(`CDP page reserved | id=${id} | op=${operationName}`);
+  return id;
+}
+
+export function releaseCdpPageReservation(id: string): void {
+  if (!cdpPageReservation || cdpPageReservation.id !== id) return;
+  logger.log(
+    `CDP page reservation released | id=${id} | op=${cdpPageReservation.operationName}`,
+  );
+  cdpPageReservation = null;
+  activeCdpPageOperation = "none";
+}
 
 export async function withCdpPageLock<T>(
   operationName: string,
-  operation: () => Promise<T>,
+  operation: (releaseLock: () => void) => Promise<T>,
 ): Promise<T> {
+  if (cdpPageReservation) {
+    throw new Error(
+      `SO7O CDP page reserved for manual verification: ${cdpPageReservation.operationName}`,
+    );
+  }
   const operationId = ++cdpPageOperationSequence;
   const requestedAt = Date.now();
   logger.log(
@@ -209,19 +239,38 @@ export async function withCdpPageLock<T>(
     releaseOperation = resolve;
   });
   await previousOperation;
+
+  // A CAPTCHA reservation may have been created while this operation waited.
+  if (cdpPageReservation) {
+    const reason = cdpPageReservation.operationName;
+    logger.warn(
+      `CDP lock skipped | id=${operationId} | op=${operationName} | reserved=${reason}`,
+    );
+    releaseOperation();
+    throw new Error(`SO7O CDP page reserved for manual verification: ${reason}`);
+  }
+
   const acquiredAt = Date.now();
   activeCdpPageOperation = `${operationName}#${operationId}`;
   logger.log(
     `CDP lock acquired | id=${operationId} | op=${operationName} | pid=${process.pid} | waitMs=${acquiredAt - requestedAt}`,
   );
-  try {
-    return await operation();
-  } finally {
+  let released = false;
+  const releaseLock = () => {
+    if (released) return;
+    released = true;
     logger.log(
       `CDP lock released | id=${operationId} | op=${operationName} | pid=${process.pid} | heldMs=${Date.now() - acquiredAt}`,
     );
-    activeCdpPageOperation = "none";
+    activeCdpPageOperation = cdpPageReservation
+      ? `reserved:${cdpPageReservation.operationName}`
+      : "none";
     releaseOperation();
+  };
+  try {
+    return await operation(releaseLock);
+  } finally {
+    releaseLock();
   }
 }
 
