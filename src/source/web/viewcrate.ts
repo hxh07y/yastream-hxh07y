@@ -169,11 +169,11 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
         const renderWindow = window as typeof window & {
           __viewcrateRenderDiag?: {
             startedAt: number;
-            section?: Element;
+            section?: Element | undefined;
             mutations: Array<Record<string, unknown>>;
             operations: Array<Record<string, unknown>>;
-            rootObserver?: MutationObserver;
-            sectionObserver?: MutationObserver;
+            rootObserver?: MutationObserver | undefined;
+            sectionObserver?: MutationObserver | undefined;
             restorers: Array<() => void>;
           };
         };
@@ -411,7 +411,7 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
           bootstrapResource,
           render,
         };
-      }).catch(() => ({ visibilityState: "unavailable", hidden: null, focused: null, visibilityOverride: true, readyState: "unavailable", sectionChildCount: -1, downloadHandlerBound: false, bootstrapResource: [], lifecycle: null }));
+      }).catch(() => ({ visibilityState: "unavailable", hidden: null, focused: null, visibilityOverride: true, readyState: "unavailable", sectionChildCount: -1, downloadHandlerBound: false, bootstrapResource: [], render: null }));
       const html = await page.content();
       const status = navigationResponse?.status() ?? 0;
       const $ = cheerio.load(html);
