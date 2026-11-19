@@ -1026,21 +1026,47 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
       const deadline = Date.now() + 120000;
       let submittedAfterVerification = false;
       while (Date.now() < deadline) {
+        if (page.isClosed()) {
+          const availablePages = await browser.pages();
+          page =
+            availablePages.find((candidate) => matchesAnyHost(candidate.url(), OUO_HOSTS)) ||
+            availablePages.find((candidate) => candidate.url() !== "about:blank")!;
+        }
+
         if (
           verificationId &&
           consumeOuoVerificationOpenRequest(verificationId)
         ) {
-          await page.bringToFront().catch((error) => {
-            this.logger.warn(`Unable to bring SO7O verification tab forward: ${error}`);
-          });
-          await page.evaluate(() => window.focus()).catch(() => {});
-          this.logger.log("OUO verification page brought to front on user request");
+          const availablePages = await browser.pages();
+          const currentOuoPage = availablePages.find((candidate) =>
+            matchesAnyHost(candidate.url(), OUO_HOSTS),
+          );
+          if (currentOuoPage) page = currentOuoPage;
+          if (page && !page.isClosed()) {
+            await page.bringToFront().catch((error) => {
+              this.logger.warn(`Unable to bring SO7O verification tab forward: ${error}`);
+            });
+            await page.evaluate(() => window.focus()).catch(() => {});
+          } else {
+            this.logger.warn("SO7O has no active OUO browser tab to bring forward");
+          }
+          this.logger.log("OUO verification tab focus request processed");
         }
 
+        if (!page || page.isClosed()) {
+          await new Promise((resolve) => setTimeout(resolve, 500));
+          continue;
+        }
         currentUrl = page.url();
-        if (currentUrl && !matchesAnyHost(currentUrl, OUO_HOSTS)) {
+        if (
+          /^https?:\\/\\//i.test(currentUrl) &&
+          !matchesAnyHost(currentUrl, OUO_HOSTS)
+        ) {
           this.logger.log(`MKVDrama OUO resolved | url=${currentUrl}`);
           return currentUrl;
+        }
+        if (currentUrl.startsWith("chrome-error://")) {
+          this.logger.warn("SO7O OUO tab is showing a browser error; waiting for a valid redirect");
         }
 
         if (!submittedAfterVerification && matchesAnyHost(currentUrl, OUO_HOSTS)) {
