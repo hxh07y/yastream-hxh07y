@@ -254,6 +254,21 @@ export async function deleteStream(id: string) {
   await db.delete(stream).where(eq(stream.id, id));
 }
 
+export async function deleteStreamsByProviderContentEpisode(
+  providerContentId: string,
+  season: number,
+  episode: number,
+) {
+  if (!db) return;
+  await db.delete(stream).where(
+    and(
+      eq(stream.providerContentId, providerContentId),
+      eq(stream.season, season.toString()),
+      eq(stream.episode, episode.toString()),
+    ),
+  );
+}
+
 // SUBTITLES
 export async function upsertSubtitles(
   subtitleRows: Omit<ESubtitleInsert, "createdAt">[],
