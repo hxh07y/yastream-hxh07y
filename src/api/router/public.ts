@@ -5,6 +5,10 @@ import path from "path";
 import pkg from "../../../package.json" with { type: "json" };
 import { defaultConfig } from "../../lib/manifest.js";
 import { ENV } from "../../utils/env.js";
+import {
+  getOuoVerificationStatus,
+  requestOuoVerificationOpen,
+} from "../../utils/ouo-verification.js";
 
 const publicRouter = new Hono();
 const rootDir = process.cwd();
@@ -42,6 +46,30 @@ function mdToHtml(md: string) {
     .replace(/^\- (.*$)/gim, "<li>$1</li>")
     .replace(/\*\*(.*)\*\*/gim, "<b>$1</b>");
 }
+
+// Manual OUO Turnstile handoff. The unguessable challenge ID is the access token.
+publicRouter.get("/verify/:id", (c) => {
+  const id = c.req.param("id");
+  if (getOuoVerificationStatus(id) === "expired") return c.notFound();
+  const filePath = path.join(publicDir, "verify.html");
+  if (!fs.existsSync(filePath)) return c.notFound();
+  const html = fs.readFileSync(filePath, "utf8").replace("{{CHALLENGE_ID}}", id);
+  c.header("cache-control", "no-store");
+  return c.html(html);
+});
+
+publicRouter.get("/verify/:id/status", (c) => {
+  const status = getOuoVerificationStatus(c.req.param("id"));
+  if (status === "expired") return c.json({ status }, 404);
+  c.header("cache-control", "no-store");
+  return c.json({ status });
+});
+
+publicRouter.post("/verify/:id/open", (c) => {
+  const accepted = requestOuoVerificationOpen(c.req.param("id"));
+  if (!accepted) return c.json({ message: "Verification session expired" }, 410);
+  return c.json({ ok: true, status: "open_requested" });
+});
 
 // Public static file
 const CACHE_SECONDS = 3600;
