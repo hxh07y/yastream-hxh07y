@@ -62,30 +62,9 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
     const browser = await getBrowser();
     let removeNetworkDiagnostics: (() => void) | undefined;
     let removeVisibilityOverride: (() => Promise<void>) | undefined;
-    let removeRenderDiagnostics: (() => Promise<unknown>) | undefined;
-    try {
-      const pages = await browser.pages();
-      // SO7O exposes its existing WebView rather than allowing new targets.
-      // Reuse it even when the current page is not already on Viewcrate.
-      const page = pages.find((candidate) => candidate.url() !== "about:blank") || pages[0];
-      if (!page) {
-        throw new ViewcrateError("SO7O does not expose an existing WebView page");
-      }
-      removeRenderDiagnostics = () => page.evaluate(() => {
-        const diag = (window as typeof window & {
-          __viewcrateRenderDiag?: {
-            rootObserver?: MutationObserver;
-            sectionObserver?: MutationObserver;
-            restorers: Array<() => void>;
-          };
-        }).__viewcrateRenderDiag;
-        diag?.rootObserver?.disconnect();
-        diag?.sectionObserver?.disconnect();
-        for (const restore of diag?.restorers || []) {
-          try { restore(); } catch { /* best-effort restoration */ }
-        }
-        delete (window as typeof window & { __viewcrateRenderDiag?: unknown }).__viewcrateRenderDiag;
-      });
+    let removeNetworkDiagnostics: (() => void) | undefined;
+    let removeVisibilityOverride: (() => Promise<void>) | undefined;
+    const responseDiagnosticTasks: Promise<void>[] = [];
 
       const safeUrl = (rawUrl: string) => {
         try {
@@ -121,16 +100,62 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
         const responseUrl = response.url();
         if (!responseUrl.startsWith(VIEWCRATE_ORIGIN)) return;
         const path = new URL(responseUrl).pathname;
-        if (response.request().resourceType() === "script") {
+        const resourceType = response.request().resourceType();
+        const contentType = response.headers()["content-type"] || "unknown";
+        if (resourceType === "script") {
           logger.log(
-            `Viewcrate script response | status=${response.status()} | contentType=${response.headers()["content-type"] || "unknown"} | url=${safeUrl(responseUrl)}`,
+            `Viewcrate script response | status=${response.status()} | contentType=${contentType} | url=${safeUrl(responseUrl)}`,
           );
         }
         if (!/api|unlock|protect|password|resolve/i.test(path) && !path.includes("/c/")) return;
         logger.log(
-          `Viewcrate network response | status=${response.status()} | type=${response.request().resourceType()} | contentType=${response.headers()["content-type"] || "unknown"} | url=${safeUrl(responseUrl)}`,
+          `Viewcrate network response | status=${response.status()} | type=${resourceType} | contentType=${contentType} | url=${safeUrl(responseUrl)}`,
         );
 
+        // Compare the server responses before page JavaScript runs. Only structural
+        // metadata is logged; response values, cookies, tokens and URLs are omitted.
+        if (resourceType === "document" || path.endsWith("/bootstrap")) {
+          responseDiagnosticTasks.push((async () => {
+            try {
+              const body = await response.text();
+              if (resourceType === "document") {
+                const $ = cheerio.load(body);
+                const $section = $("main > div").eq(2);
+                const initialForms = $("form").map((_, form) => ({
+                  method: ($(form).attr("method") || "get").toLowerCase(),
+                  fields: $(form).find("input").map((__, input) => ({
+                    name: $(input).attr("name") || "",
+                    type: $(input).attr("type") || "text",
+                  })).get(),
+                })).get();
+                const scripts = $("script[src]").map((_, script) => {
+                  try { return safeUrl(new URL($(script).attr("src") || "", responseUrl).toString()); }
+                  catch { return "[invalid-script-url]"; }
+                }).get();
+                logger.log(
+                  `Viewcrate initial HTML structure | bytes=${Buffer.byteLength(body)} | protectedText=${$("body").text().toLowerCase().includes("protected content")} | dlcSectionPresent=${Boolean($section.attr("data-resolve-url"))} | sectionChildren=${$section.children().length} | sectionTextLength=${$section.text().trim().length} | forms=${JSON.stringify(initialForms)} | scripts=${JSON.stringify(scripts)}`,
+                );
+              } else {
+                let payload: any;
+                try { payload = JSON.parse(body); } catch { payload = null; }
+                const describe = (value: unknown): unknown => {
+                  if (typeof value === "string") return { type: "string", length: value.length };
+                  if (Array.isArray(value)) return { type: "array", length: value.length };
+                  if (value && typeof value === "object") return { type: "object", keys: Object.keys(value as object).sort() };
+                  return { type: value === null ? "null" : typeof value };
+                };
+                const fields = payload && typeof payload === "object" && !Array.isArray(payload)
+                  ? Object.fromEntries(Object.entries(payload).map(([key, value]) => [key, describe(value)]))
+                  : describe(payload);
+                logger.log(
+                  `Viewcrate bootstrap structure | status=${response.status()} | bytes=${Buffer.byteLength(body)} | parsedJson=${Boolean(payload)} | structure=${JSON.stringify(fields)}`,
+                );
+              }
+            } catch (error) {
+              logger.warn(`Viewcrate response structure unavailable | type=${resourceType} | reason=${String(error).slice(0, 100)}`);
+            }
+          })());
+        }
       };
       const onViewcrateRequestFailed = (request: HTTPRequest) => {
         if (!request.url().startsWith(VIEWCRATE_ORIGIN)) return;
@@ -180,139 +205,11 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
           // Keep extraction running; runtime diagnostics will show actual state.
         }
 
-        // Track the exact transition of the DLC section, and capture the
-        // JavaScript call site when page code mutates that section.
-        const renderWindow = window as typeof window & {
-          __viewcrateRenderDiag?: {
-            startedAt: number;
-            section?: Element | undefined;
-            mutations: Array<Record<string, unknown>>;
-            operations: Array<Record<string, unknown>>;
-            rootObserver?: MutationObserver | undefined;
-            sectionObserver?: MutationObserver | undefined;
-            restorers: Array<() => void>;
-          };
-        };
-        const diag = {
-          startedAt: performance.now(),
-          section: undefined as Element | undefined,
-          mutations: [] as Array<Record<string, unknown>>,
-          operations: [] as Array<Record<string, unknown>>,
-          rootObserver: undefined as MutationObserver | undefined,
-          sectionObserver: undefined as MutationObserver | undefined,
-          restorers: [] as Array<() => void>,
-        };
-        renderWindow.__viewcrateRenderDiag = diag;
 
-        const safeFrame = (frame: string) =>
-          frame.replace(/https?:\/\/[^\s)]+/g, (raw) => {
-            try {
-              const parsed = new URL(raw);
-              const path = parsed.pathname.split("/").map((part) =>
-                part.length > 32 || /^[a-f0-9]{24,}$/i.test(part) ? "[redacted]" : part
-              ).join("/");
-              return parsed.origin + path;
-            } catch {
-              return "[redacted-url]";
-            }
-          });
-
-        const sectionSnapshot = () => {
-          const section = diag.section;
-          if (!section) return { found: false };
-          const text = (section.textContent || "").replace(/\s+/g, " ").trim();
-          return {
-            found: true,
-            childCount: section.children.length,
-            hosterCount: section.querySelectorAll("div[class^='y_']").length,
-            protectedMarker: /protected content/i.test(text),
-            textLength: text.length,
-            childTypes: Array.from(section.children).slice(0, 8).map((child) => ({
-              tag: child.tagName.toLowerCase(),
-              className: typeof child.className === "string" ? child.className.slice(0, 100) : "",
-            })),
-          };
-        };
-
-        const recordOperation = (operation: string, target: Node) => {
-          const section = diag.section;
-          if (!section || diag.operations.length >= 20) return;
-          if (target !== section && target !== section.parentNode && !section.contains(target)) return;
-          const stack = String(new Error().stack || "").split("\n").slice(2, 7).map(safeFrame);
-          diag.operations.push({
-            atMs: Math.round(performance.now() - diag.startedAt),
-            operation,
-            target: target.nodeName,
-            stack,
-          });
-        };
-
-        const wrapMethod = (prototype: any, name: string) => {
-          const original = prototype?.[name];
-          if (typeof original !== "function") return;
-          const wrapped = function(this: Node, ...args: unknown[]) {
-            try { recordOperation(name, this); } catch { /* diagnostics must not affect rendering */ }
-            return original.apply(this, args);
-          };
-          prototype[name] = wrapped;
-          diag.restorers.push(() => {
-            if (prototype[name] === wrapped) prototype[name] = original;
-          });
-        };
-
-        const wrapSetter = (prototype: any, name: string) => {
-          const descriptor = Object.getOwnPropertyDescriptor(prototype, name);
-          if (!descriptor?.set || !descriptor.configurable) return;
-          const wrapped = function(this: Node, value: unknown) {
-            try { recordOperation(name + "=", this); } catch { /* diagnostics must not affect rendering */ }
-            return descriptor.set!.call(this, value);
-          };
-          Object.defineProperty(prototype, name, { ...descriptor, set: wrapped });
-          diag.restorers.push(() => {
-            const current = Object.getOwnPropertyDescriptor(prototype, name);
-            if (current?.set === wrapped) Object.defineProperty(prototype, name, descriptor);
-          });
-        };
-
-        const attachSectionObserver = () => {
-          const section = document.querySelector("main > div:nth-child(3)[data-resolve-url]");
-          if (!section || section === diag.section) return;
-          diag.sectionObserver?.disconnect();
-          diag.section = section;
-          diag.sectionObserver = new MutationObserver((records) => {
-            if (diag.mutations.length >= 30) return;
-            diag.mutations.push({
-              atMs: Math.round(performance.now() - diag.startedAt),
-              records: records.length,
-              types: Array.from(new Set(records.map((record) => record.type))),
-              state: sectionSnapshot(),
-            });
-          });
-          diag.sectionObserver.observe(section, {
-            childList: true, subtree: true, attributes: true, characterData: true,
-          });
-        };
-
-        // These wrappers only record operations targeting the DLC section or
-        // descendants; native methods and their return values are preserved.
-        for (const name of ["appendChild", "insertBefore", "removeChild", "replaceChild"]) {
-          wrapMethod(Node.prototype, name);
-        }
-        for (const name of ["replaceChildren", "append", "prepend", "replaceWith", "remove", "insertAdjacentHTML", "insertAdjacentText"]) {
-          wrapMethod(Element.prototype, name);
-        }
-        wrapSetter(Element.prototype, "innerHTML");
-        wrapSetter(Node.prototype, "textContent");
-
-        diag.rootObserver = new MutationObserver(() => attachSectionObserver());
-        if (document.documentElement) {
-          diag.rootObserver.observe(document.documentElement, { childList: true, subtree: true });
-        }
-        attachSectionObserver();
       });
       removeVisibilityOverride = () =>
         page.removeScriptToEvaluateOnNewDocument(visibilityOverride.identifier);
-      logger.log("Viewcrate page-scoped visibility override and render diagnostics installed");
+      logger.log("Viewcrate page-scoped visibility override installed");
 
       let navigationResponse = await page.goto(url, {
         waitUntil: "domcontentloaded",
@@ -404,18 +301,6 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
               transferSize: resource.transferSize || 0,
             };
           });
-        const diag = (window as typeof window & {
-          __viewcrateRenderDiag?: {
-            startedAt: number;
-            mutations: Array<Record<string, unknown>>;
-            operations: Array<Record<string, unknown>>;
-          };
-        }).__viewcrateRenderDiag;
-        const render = diag ? {
-          elapsedMs: Math.round(performance.now() - diag.startedAt),
-          mutations: diag.mutations,
-          operations: diag.operations,
-        } : null;
         return {
           visibilityState: document.visibilityState,
           hidden: document.hidden,
@@ -425,9 +310,9 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
           sectionChildCount: section?.children.length ?? 0,
           downloadHandlerBound: section?.getAttribute("data-download-handler-bound") === "true",
           bootstrapResource,
-          render,
         };
       }).catch(() => ({ visibilityState: "unavailable", hidden: null, focused: null, visibilityOverride: true, readyState: "unavailable", sectionChildCount: -1, downloadHandlerBound: false, bootstrapResource: [], render: null }));
+      await Promise.allSettled(responseDiagnosticTasks);
       const html = await page.content();
       const status = navigationResponse?.status() ?? 0;
       const $ = cheerio.load(html);
@@ -471,11 +356,6 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
       return html;
     } finally {
       removeNetworkDiagnostics?.();
-      try {
-        await removeRenderDiagnostics?.();
-      } catch {
-        // The page may have navigated or detached during cleanup.
-      }
       if (removeVisibilityOverride) {
         try {
           await removeVisibilityOverride();
