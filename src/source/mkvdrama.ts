@@ -42,6 +42,8 @@ import {
 import {
   getBrowser,
   getRedirectedUrlCDP,
+  releaseCdpPageReservation,
+  reserveCdpPageForManualVerification,
   withCdpPageLock,
 } from "../utils/browser/puppeteer.js";
 import { cache, TTL_MS } from "../utils/cache.js";
@@ -824,7 +826,10 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
         try {
           switch (true) {
             case matchesHost(redirectedUrl, VIEWCRATE_HOST):
-              const viewcrate = await getUrlsFromViewcrateDlc(redirectedUrl);
+              const viewcrate = await getUrlsFromViewcrateDlc(
+                redirectedUrl,
+                ouo.password || undefined,
+              );
               urls = viewcrate.urls;
               episodes = viewcrate.episodes;
               break;
@@ -988,18 +993,33 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
     targetUrl: string,
     providerContentId: string,
   ): Promise<string | undefined> {
-    return withCdpPageLock("MKVDrama OUO resolution", () =>
-      this.getMkvdramaOuoFinalUrlCDPLocked(targetUrl, providerContentId),
+    return withCdpPageLock("MKVDrama OUO resolution", (releaseLock) =>
+      this.getMkvdramaOuoFinalUrlCDPLocked(
+        targetUrl,
+        providerContentId,
+        releaseLock,
+      ),
     );
   }
 
   private async getMkvdramaOuoFinalUrlCDPLocked(
     targetUrl: string,
     providerContentId: string,
+    releaseLock: () => void,
   ): Promise<string | undefined> {
     const browser = await getBrowser();
     let page: Page | undefined;
     let verificationId: string | undefined;
+    let pageReservationId: string | undefined;
+    const reserveForManualVerification = () => {
+      if (pageReservationId) return;
+      pageReservationId = reserveCdpPageForManualVerification(
+        "MKVDrama OUO manual CAPTCHA",
+      );
+      // Keep exclusive ownership of SO7O's single WebView, but do not keep
+      // the mutex locked during the user's manual CAPTCHA interaction.
+      releaseLock();
+    };
     try {
       const pages = await browser.pages();
       // Link 1 may have left the shared tab on ouo.press before Link 2 runs.
@@ -1032,6 +1052,9 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
       // Wait until the page actually displays its human-click instruction.
       await new Promise((resolve) => setTimeout(resolve, 2000));
       let currentUrl = page.url();
+      if (matchesAnyHost(currentUrl, OUO_HOSTS)) {
+        reserveForManualVerification();
+      }
       let manualVerificationDetected = false;
       const detectManualTurnstilePrompt = async () => {
         if (!page || page.isClosed() || !matchesAnyHost(page.url(), OUO_HOSTS)) {
@@ -1134,6 +1157,9 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
           continue;
         }
         currentUrl = page.url();
+        if (matchesAnyHost(currentUrl, OUO_HOSTS)) {
+          reserveForManualVerification();
+        }
         if (
           !manualVerificationDetected &&
           matchesAnyHost(currentUrl, OUO_HOSTS) &&
@@ -1187,8 +1213,13 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
       );
       return undefined;
     } finally {
-      // SO7O owns this browser and tab; never close either.
-      await browser.disconnect();
+      // SO7O owns this browser and tab; never close either. Release the page
+      // reservation only after disconnecting so another task cannot navigate
+      // the shared WebView while this resolver is still using it.
+      await browser.disconnect().catch(() => {});
+      if (pageReservationId) {
+        releaseCdpPageReservation(pageReservationId);
+      }
     }
   }
 
