@@ -197,6 +197,14 @@ let cdpPageOperationSequence = 0;
 let cdpPageReservationSequence = 0;
 let cdpPageReservation: { id: string; operationName: string } | null = null;
 
+// Read through a function so TypeScript does not incorrectly preserve a
+// pre-await null narrowing across the asynchronous queue wait.
+function getCdpPageReservation():
+  | { id: string; operationName: string }
+  | null {
+  return cdpPageReservation;
+}
+
 export function reserveCdpPageForManualVerification(operationName: string): string {
   if (cdpPageReservation) {
     throw new Error(
@@ -241,8 +249,9 @@ export async function withCdpPageLock<T>(
   await previousOperation;
 
   // A CAPTCHA reservation may have been created while this operation waited.
-  if (cdpPageReservation) {
-    const reason = cdpPageReservation.operationName;
+  const reservationAfterWait = getCdpPageReservation();
+  if (reservationAfterWait) {
+    const reason = reservationAfterWait.operationName;
     logger.warn(
       `CDP lock skipped | id=${operationId} | op=${operationName} | reserved=${reason}`,
     );
