@@ -1030,7 +1030,7 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
           const availablePages = await browser.pages();
           page =
             availablePages.find((candidate) => matchesAnyHost(candidate.url(), OUO_HOSTS)) ||
-            availablePages.find((candidate) => candidate.url() !== "about:blank")!;
+            availablePages.find((candidate) => candidate.url() !== "about:blank") || page;
         }
 
         if (
