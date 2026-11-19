@@ -15,11 +15,20 @@ const visitors = new Set<string>();
 
 export function extractHeaderInfo(c: Context) {
   // Reverse proxies may append multiple addresses; use the originating client entry.
-  const forwardedFor = c.req.header("x-forwarded-for");
+  // When running directly (e.g. in Termux), fall back to the Node socket address.
+  const normalizeIp = (value?: string) => {
+    const address = value?.split(",")[0]?.trim();
+    if (!address) return undefined;
+    return address.startsWith("::ffff:") ? address.slice(7) : address;
+  };
+  const incoming = (
+    c.env as { incoming?: { socket?: { remoteAddress?: string } } }
+  ).incoming;
   const ip =
-    forwardedFor?.split(",")[0]?.trim() ||
-    c.req.header("cf-connecting-ip") ||
-    c.req.header("x-real-ip") ||
+    normalizeIp(c.req.header("x-forwarded-for")) ||
+    normalizeIp(c.req.header("cf-connecting-ip")) ||
+    normalizeIp(c.req.header("x-real-ip")) ||
+    normalizeIp(incoming?.socket?.remoteAddress) ||
     "unknown";
   const country = c.req.header("cf-ipcountry") || "";
   const url = c.req.url;
