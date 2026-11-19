@@ -61,6 +61,7 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
   return withCdpPageLock("Viewcrate DLC extraction", async () => {
     const browser = await getBrowser();
     let removeNetworkDiagnostics: (() => void) | undefined;
+    let visibilityOverrideId: string | undefined;
     try {
       const pages = await browser.pages();
       // SO7O exposes its existing WebView rather than allowing new targets.
@@ -132,6 +133,31 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
         page.off("request", onViewcrateRequest);
         page.off("response", onViewcrateResponse);
       };
+
+      // Viewcrate renders its protected-content placeholder when its page context
+      // believes it is hidden. Override visibility only in this page, before
+      // navigation, so its own scripts initialize as if the document were visible.
+      const visibilityOverride = await page.evaluateOnNewDocument(() => {
+        try {
+          Object.defineProperty(Document.prototype, "visibilityState", {
+            configurable: true,
+            get: () => "visible",
+          });
+          Object.defineProperty(Document.prototype, "hidden", {
+            configurable: true,
+            get: () => false,
+          });
+          document.addEventListener(
+            "DOMContentLoaded",
+            () => queueMicrotask(() => document.dispatchEvent(new Event("visibilitychange"))),
+            { once: true },
+          );
+        } catch {
+          // Keep extraction running; runtime diagnostics will show actual state.
+        }
+      });
+      visibilityOverrideId = visibilityOverride.identifier;
+      logger.log("Viewcrate page-scoped visibility override installed");
 
       let navigationResponse = await page.goto(url, {
         waitUntil: "domcontentloaded",
@@ -227,12 +253,13 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
           visibilityState: document.visibilityState,
           hidden: document.hidden,
           focused: document.hasFocus(),
+          visibilityOverride: true,
           readyState: document.readyState,
           sectionChildCount: section?.children.length ?? 0,
           downloadHandlerBound: section?.getAttribute("data-download-handler-bound") === "true",
           bootstrapResource,
         };
-      }).catch(() => ({ visibilityState: "unavailable", hidden: null, focused: null, readyState: "unavailable", sectionChildCount: -1, downloadHandlerBound: false, bootstrapResource: [] }));
+      }).catch(() => ({ visibilityState: "unavailable", hidden: null, focused: null, visibilityOverride: true, readyState: "unavailable", sectionChildCount: -1, downloadHandlerBound: false, bootstrapResource: [] }));
       const html = await page.content();
       const status = navigationResponse?.status() ?? 0;
       const $ = cheerio.load(html);
@@ -307,6 +334,14 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
       return html;
     } finally {
       removeNetworkDiagnostics?.();
+      if (visibilityOverrideId) {
+        try {
+          await page.removeScriptToEvaluateOnNewDocument(visibilityOverrideId);
+          logger.log("Viewcrate page-scoped visibility override removed");
+        } catch (error) {
+          logger.warn("Could not remove Viewcrate visibility override | reason=" + String(error).slice(0, 120));
+        }
+      }
       // The WebView belongs to SO7O; disconnect without closing its page.
       await browser.disconnect();
     }
