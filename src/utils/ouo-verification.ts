@@ -24,6 +24,9 @@ function getActive(id: string) {
 }
 
 export function createOuoVerification() {
+  for (const [existingId, verification] of verifications) {
+    if (Date.now() >= verification.expiresAt) verifications.delete(existingId);
+  }
   const id = uuidv7();
   verifications.set(id, {
     status: "waiting",
