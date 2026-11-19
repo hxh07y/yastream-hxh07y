@@ -602,15 +602,18 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
         `MKVDrama detail extracted | links=${ouoRedirectLinks.length} | episodeRanges=${episodeRanges.length} | episodes=${episodes.length} | qualities=${[...new Set(ouoRedirectLinks.map((link) => link.quality))].join(",")}`,
       );
 
-      // Extract password from admin comment (first moderator comment)
+      // Extract password from admin comment (first moderator comment).
+      // Log only presence/shape diagnostics; never log the password itself.
+      const moderatorBadges = $(".fe-role-badge--moderator");
+      const moderatorCard = moderatorBadges.first().closest(".fe-comment-card");
+      const rawPassword = moderatorCard
+        .find(".fe-comment-text")
+        .attr("data-raw-body");
       const password =
-        $(".fe-role-badge--moderator")
-          .first()
-          .closest(".fe-comment-card")
-          .find(".fe-comment-text")
-          .attr("data-raw-body")
-          ?.replace(/\*\*/g, "")
-          .trim() || null;
+        rawPassword?.replace(/\*\*/g, "").trim() || null;
+      this.logger.log(
+        `MKVDrama password diagnostic | moderatorBadges=${moderatorBadges.length} | moderatorCard=${moderatorCard.length > 0} | rawBodyAttribute=${rawPassword !== undefined} | passwordFound=${Boolean(password)} | passwordLength=${password?.length ?? 0}`,
+      );
 
       return {
         detail,
