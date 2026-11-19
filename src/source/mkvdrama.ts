@@ -1013,7 +1013,7 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
       const publishManualVerification = () => {
         if (manualVerificationDetected) return;
         manualVerificationDetected = true;
-        markOuoVerificationRequired(providerContentId);
+        markOuoVerificationRequired(providerContentId, currentUrl);
         const verification = getOuoVerificationForContent(providerContentId);
         verificationId = verification?.id;
         if (verification) {
