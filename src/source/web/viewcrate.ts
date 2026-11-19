@@ -249,8 +249,8 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
             mutationSamples: Array<Record<string, unknown>>;
             heartbeatCount: number;
             lastHeartbeatAt: number;
-            observer?: MutationObserver;
-            heartbeat?: number;
+            observer?: MutationObserver | undefined;
+            heartbeat?: number | undefined;
           };
         };
         const diag = {
