@@ -63,6 +63,12 @@ import { BaseProvider } from "./provider.js";
 import { getUrlsFromFilecrypt } from "./web/filecrypt.js";
 import { getUrlsFromMkvdrama } from "./web/mkvdrama.js";
 import { getOuoId, OUO_HOSTS } from "./web/ouo.js";
+import {
+  completeOuoVerification,
+  consumeOuoVerificationOpenRequest,
+  createOuoVerification,
+  expireOuoVerification,
+} from "../utils/ouo-verification.js";
 import { getUrlsFromViewcrateDlc } from "./web/viewcrate.js";
 interface MkvdramaSeries {
   id: string;
@@ -923,6 +929,7 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
   ): Promise<string | undefined> {
     const browser = await getBrowser();
     let page: Page | undefined;
+    let verificationId: string | undefined;
     try {
       const pages = await browser.pages();
       // Link 1 may have left the shared tab on ouo.press before Link 2 runs.
@@ -983,17 +990,31 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
         this.logger.log(
           `MKVDrama OUO page diagnostics | ${JSON.stringify(diagnostics)}`,
         );
+        const verification = createOuoVerification();
+        verificationId = verification.id;
         this.logger.warn(
-          "MKVDrama OUO requires manual verification | complete the CAPTCHA in the SO7O browser tab",
+          `MKVDrama OUO requires manual verification | complete the CAPTCHA in SO7O | verification page: ${verification.pageUrl}`,
         );
       }
 
       const deadline = Date.now() + 120000;
       let submittedAfterVerification = false;
       while (Date.now() < deadline) {
+        if (
+          verificationId &&
+          consumeOuoVerificationOpenRequest(verificationId)
+        ) {
+          await page.bringToFront().catch((error) => {
+            this.logger.warn(`Unable to bring SO7O verification tab forward: ${error}`);
+          });
+          await page.evaluate(() => window.focus()).catch(() => {});
+          this.logger.log("OUO verification page brought to front on user request");
+        }
+
         currentUrl = page.url();
         if (currentUrl && !matchesAnyHost(currentUrl, OUO_HOSTS)) {
           this.logger.log(`MKVDrama OUO resolved | url=${currentUrl}`);
+          if (verificationId) completeOuoVerification(verificationId);
           return currentUrl;
         }
 
@@ -1032,6 +1053,7 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
       );
       return undefined;
     } finally {
+      if (verificationId) expireOuoVerification(verificationId);
       // SO7O owns this browser and tab; never close either.
       await browser.disconnect();
     }
