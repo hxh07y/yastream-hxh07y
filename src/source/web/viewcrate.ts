@@ -186,7 +186,7 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
       };
       const onViewcrateConsole = (message: ConsoleMessage) => {
         const type = message.type();
-        if (type !== "error" && type !== "warning") return;
+        if (type !== "error" && type !== "warn") return;
         logger.warn(`Viewcrate page console | type=${type} | text=${safeConsoleText(message.text())}`);
       };
       const onViewcratePageError = (error: unknown) => {
