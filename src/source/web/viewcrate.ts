@@ -62,10 +62,9 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
     const browser = await getBrowser();
     let removeNetworkDiagnostics: (() => void) | undefined;
     let removeVisibilityOverride: (() => Promise<void>) | undefined;
-    let removeNetworkDiagnostics: (() => void) | undefined;
-    let removeVisibilityOverride: (() => Promise<void>) | undefined;
     const responseDiagnosticTasks: Promise<void>[] = [];
 
+    try {
       const safeUrl = (rawUrl: string) => {
         try {
           const parsed = new URL(rawUrl);
