@@ -10,8 +10,12 @@ import {
 import * as cheerio from "cheerio";
 import { CookieData, Page } from "puppeteer";
 import { uuidv7 } from "uuidv7";
-import { upsertStream } from "../db/queries.js";
 import {
+  deleteStreamsByProviderContentEpisode,
+  upsertStream,
+} from "../db/queries.js";
+import {
+  deleteMkvdramaByProviderContentId,
   getMkvdrama,
   upsertMkvdrama as upsertMkvdramas,
 } from "../db/query/mkvdrama.js";
@@ -191,6 +195,7 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
   async getStreams(
     content: ContentDetail,
     config: UserConfig,
+    forceRefresh = false,
   ): Promise<Stream[]> {
     try {
       const { title, type, year, id, season } = content;
@@ -206,6 +211,21 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
 
       const providerContentId = `${this.name}:${mkvdramaId}`;
       getOrCreateOuoVerification(providerContentId);
+
+      if (forceRefresh) {
+        this.logger.warn(
+          `Forced stream refresh | content=${providerContentId} | season=1 | episode=${episode}`,
+        );
+        cache.delete(streamKey);
+        await deleteStreamsByProviderContentEpisode(
+          providerContentId,
+          1,
+          episode,
+        );
+        // Remove saved OUO destinations too, so the next job re-reads the
+        // current MKVDrama download links and resolves the mirrors again.
+        await deleteMkvdramaByProviderContentId(providerContentId);
+      }
       const getCaptchaItem = (): Stream[] => {
         const verification = getOuoVerificationForContent(providerContentId);
         if (verification?.status !== "awaiting_verification") return [];
