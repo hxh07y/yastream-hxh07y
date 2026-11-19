@@ -68,6 +68,43 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
         throw new ViewcrateError("SO7O does not expose an existing WebView page");
       }
 
+      const safeUrl = (rawUrl: string) => {
+        try {
+          const parsed = new URL(rawUrl);
+          const safePath = parsed.pathname
+            .split("/")
+            .map((segment) =>
+              segment.length > 32 || /^[a-f0-9]{24,}$/i.test(segment)
+                ? "[redacted]"
+                : segment,
+            )
+            .join("/");
+          return `${parsed.host}${safePath}`;
+        } catch {
+          return "[invalid-url]";
+        }
+      };
+      const onViewcrateRequest = (request: import("puppeteer-core").HTTPRequest) => {
+        const requestUrl = request.url();
+        if (!requestUrl.startsWith(VIEWCRATE_ORIGIN)) return;
+        const path = new URL(requestUrl).pathname;
+        if (!/api|unlock|protect|password|resolve|\/c\//i.test(path)) return;
+        logger.log(
+          `Viewcrate network request | method=${request.method()} | type=${request.resourceType()} | url=${safeUrl(requestUrl)}`,
+        );
+      };
+      const onViewcrateResponse = (response: import("puppeteer-core").HTTPResponse) => {
+        const responseUrl = response.url();
+        if (!responseUrl.startsWith(VIEWCRATE_ORIGIN)) return;
+        const path = new URL(responseUrl).pathname;
+        if (!/api|unlock|protect|password|resolve|\/c\//i.test(path)) return;
+        logger.log(
+          `Viewcrate network response | status=${response.status()} | type=${response.request().resourceType()} | contentType=${response.headers()["content-type"] || "unknown"} | url=${safeUrl(responseUrl)}`,
+        );
+      };
+      page.on("request", onViewcrateRequest);
+      page.on("response", onViewcrateResponse);
+
       let navigationResponse = await page.goto(url, {
         waitUntil: "domcontentloaded",
         timeout: 60000,
@@ -161,11 +198,46 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
       }).get().slice(0, 12);
       const formSummary = $("form").map((_, form) => ({
         action: $(form).attr("action") || "",
+        method: ($(form).attr("method") || "get").toLowerCase(),
         fields: $(form).find("input").map((__, input) => ({
           name: $(input).attr("name") || "",
           type: $(input).attr("type") || "text",
         })).get(),
+        buttons: $(form).find("button, input[type='submit']").map((__, button) =>
+          $(button).text().trim() || $(button).attr("value") || "",
+        ).get(),
       })).get();
+      const scriptDiagnostics = await page.evaluate(() => {
+        const scripts = Array.from(document.scripts);
+        const inlineText = scripts
+          .filter((script) => !script.src)
+          .map((script) => script.textContent || "")
+          .join("\\n")
+          .toLowerCase();
+        return {
+          externalScripts: scripts
+            .filter((script) => Boolean(script.src))
+            .map((script) => {
+              try {
+                return new URL(script.src, location.href).pathname;
+              } catch {
+                return "[invalid-script-url]";
+              }
+            })
+            .slice(0, 30),
+          inlineScriptCount: scripts.filter((script) => !script.src).length,
+          inlineHints: {
+            password: inlineText.includes("password"),
+            protected: inlineText.includes("protected"),
+            csrf: inlineText.includes("csrf"),
+            unlock: inlineText.includes("unlock"),
+            resolve: inlineText.includes("resolve"),
+          },
+        };
+      });
+      const sectionAttributes = $dlcSection.length
+        ? { ...($dlcSection[0] as any).attribs }
+        : {};
       if (status >= 400 || !hasDlcSection) {
         logger.warn(
           `Viewcrate DOM diagnostic | url=${page.url()} | body=${pageText.slice(0, 450)} | forms=${JSON.stringify(formSummary)} | mainDivs=${$("main > div").length}`,
@@ -176,10 +248,15 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
       }
 
       logger.log(
-        `Viewcrate browser page ready | status=${status} | bytes=${Buffer.byteLength(html)} | episodeHosters=${sectionHosters} | documentHosters=${documentHosters} | protectedText=${pageText.toLowerCase().includes("protected content")} | passwordProvided=${Boolean(password)} | forms=${formSummary.length} | sectionPreview=${sectionPreview} | sectionChildren=${JSON.stringify(sectionChildren)}`,
+        `Viewcrate browser page ready | status=${status} | bytes=${Buffer.byteLength(html)} | episodeHosters=${sectionHosters} | documentHosters=${documentHosters} | protectedText=${pageText.toLowerCase().includes("protected content")} | passwordProvided=${Boolean(password)} | forms=${formSummary.length} | sectionPreview=${sectionPreview} | sectionChildren=${JSON.stringify(sectionChildren)} | sectionAttributes=${JSON.stringify(sectionAttributes)}`,
+      );
+      logger.log(
+        `Viewcrate unlock diagnostics | page=${safeUrl(page.url())} | forms=${JSON.stringify(formSummary)} | scripts=${JSON.stringify(scriptDiagnostics)}`,
       );
       return html;
     } finally {
+      page.off("request", onViewcrateRequest);
+      page.off("response", onViewcrateResponse);
       // The WebView belongs to SO7O; disconnect without closing its page.
       await browser.disconnect();
     }
