@@ -64,10 +64,11 @@ import { getUrlsFromFilecrypt } from "./web/filecrypt.js";
 import { getUrlsFromMkvdrama } from "./web/mkvdrama.js";
 import { getOuoId, OUO_HOSTS } from "./web/ouo.js";
 import {
-  completeOuoVerification,
+  completeOuoVerificationForContent,
   consumeOuoVerificationOpenRequest,
-  createOuoVerification,
-  expireOuoVerification,
+  getOuoVerificationForContent,
+  getOrCreateOuoVerification,
+  markOuoVerificationRequired,
 } from "../utils/ouo-verification.js";
 import { getUrlsFromViewcrateDlc } from "./web/viewcrate.js";
 interface MkvdramaSeries {
@@ -250,17 +251,40 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
         });
         description = `${total + 1} in queue\nWait about ${wait + 1} minutes`;
       }
-      return [
-        {
-          name: this.displayName,
-          description: description,
-          externalUrl: getOrigin(),
+      const verification = getOrCreateOuoVerification(`${this.name}:${mkvdramaId}`);
+      const streams: Stream[] = [];
+      const activeVerification = getOuoVerificationForContent(`${this.name}:${mkvdramaId}`);
+      if (activeVerification) {
+        streams.push({
+          name: "🔐 MKVDrama CAPTCHA",
+          description: "Open this item to access the OUO verification page",
+          externalUrl: activeVerification.pageUrl,
           behaviorHints: {
             notWebReady: true,
-            filename: `${description}-${this.name}`,
+            filename: "MKVDrama-OUO-Verification",
           },
+        });
+      } else {
+        streams.push({
+          name: "🔐 MKVDrama CAPTCHA",
+          description: "Open this item to access the OUO verification page",
+          externalUrl: verification.pageUrl,
+          behaviorHints: {
+            notWebReady: true,
+            filename: "MKVDrama-OUO-Verification",
+          },
+        });
+      }
+      streams.push({
+        name: this.displayName,
+        description: description,
+        externalUrl: getOrigin(),
+        behaviorHints: {
+          notWebReady: true,
+          filename: `${description}-${this.name}`,
         },
-      ];
+      });
+      return streams;
     } catch (error) {
       handleError(error, this.logger, `Fail getStreams ${content.title}`);
       return [];
@@ -696,7 +720,7 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
         const isOuo = matchesAnyHost(originalUrl, OUO_HOSTS);
         switch (true) {
           case isOuo:
-            redirectedUrl = await this.getMkvdramaOuoFinalUrlCDP(originalUrl);
+            redirectedUrl = await this.getMkvdramaOuoFinalUrlCDP(originalUrl, providerContentId);
             id = getOuoId(originalUrl);
             break;
           case matchesHost(originalUrl, VIEWCRATE_ORIGIN):
@@ -810,6 +834,7 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
         if (episodeStreams) await upsertStream(episodeStreams.flat());
       }),
     );
+    completeOuoVerificationForContent(providerContentId);
     return;
   }
 
@@ -920,12 +945,18 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
     }
   }
 
-  private getMkvdramaOuoFinalUrlCDP(targetUrl: string): Promise<string | undefined> {
-    return withCdpPageLock("MKVDrama OUO resolution", () => this.getMkvdramaOuoFinalUrlCDPLocked(targetUrl));
+  private getMkvdramaOuoFinalUrlCDP(
+    targetUrl: string,
+    providerContentId: string,
+  ): Promise<string | undefined> {
+    return withCdpPageLock("MKVDrama OUO resolution", () =>
+      this.getMkvdramaOuoFinalUrlCDPLocked(targetUrl, providerContentId),
+    );
   }
 
   private async getMkvdramaOuoFinalUrlCDPLocked(
     targetUrl: string,
+    providerContentId: string,
   ): Promise<string | undefined> {
     const browser = await getBrowser();
     let page: Page | undefined;
@@ -990,11 +1021,18 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
         this.logger.log(
           `MKVDrama OUO page diagnostics | ${JSON.stringify(diagnostics)}`,
         );
-        const verification = createOuoVerification();
-        verificationId = verification.id;
-        this.logger.warn(
-          `MKVDrama OUO requires manual verification | complete the CAPTCHA in SO7O | verification page: ${verification.pageUrl}`,
-        );
+        markOuoVerificationRequired(providerContentId);
+        const verification = getOuoVerificationForContent(providerContentId);
+        verificationId = verification?.id;
+        if (verification) {
+          this.logger.warn(
+            `MKVDrama OUO requires manual verification | open the MKVDrama CAPTCHA item in Nuvio | verification page: ${verification.pageUrl}`,
+          );
+        } else {
+          this.logger.warn(
+            "MKVDrama OUO requires manual verification | no active verification session was found",
+          );
+        }
       }
 
       const deadline = Date.now() + 120000;
@@ -1014,7 +1052,6 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
         currentUrl = page.url();
         if (currentUrl && !matchesAnyHost(currentUrl, OUO_HOSTS)) {
           this.logger.log(`MKVDrama OUO resolved | url=${currentUrl}`);
-          if (verificationId) completeOuoVerification(verificationId);
           return currentUrl;
         }
 
@@ -1053,7 +1090,6 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
       );
       return undefined;
     } finally {
-      if (verificationId) expireOuoVerification(verificationId);
       // SO7O owns this browser and tab; never close either.
       await browser.disconnect();
     }
