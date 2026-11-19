@@ -184,9 +184,13 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
           `Viewcrate request failed | type=${request.resourceType()} | url=${safeUrl(request.url())} | reason=${request.failure()?.errorText || "unknown"}`,
         );
       };
-      const onViewcratePageError = (error: Error) => {
+      const onViewcratePageError = (error: unknown) => {
+        const message =
+          error instanceof Error
+            ? `${error.name}: ${error.message}`
+            : String(error);
         logger.warn(
-          `Viewcrate page JavaScript error | name=${error.name} | message=${error.message.slice(0, 200)}`,
+          `Viewcrate page JavaScript error | ${message.slice(0, 200)}`,
         );
       };
       page.on("request", onViewcrateRequest);
