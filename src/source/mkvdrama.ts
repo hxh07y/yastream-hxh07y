@@ -251,18 +251,23 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
         });
         description = `${total + 1} in queue\nWait about ${wait + 1} minutes`;
       }
-      const verification = getOrCreateOuoVerification(`${this.name}:${mkvdramaId}`);
-      const streams: Stream[] = [
-        {
+      const providerContentId = `${this.name}:${mkvdramaId}`;
+      getOrCreateOuoVerification(providerContentId);
+      const verification = getOuoVerificationForContent(providerContentId);
+      const streams: Stream[] = [];
+      // Nuvio only receives this item after OUO explicitly asks for a human
+      // click. The custom URI foregrounds SO7O's existing WebView session.
+      if (verification?.status === "awaiting_verification") {
+        streams.push({
           name: "🔐 MKVDrama CAPTCHA",
-          description: "Open this item to access the OUO verification page",
-          externalUrl: verification.pageUrl,
+          description: "Manual CAPTCHA required — open SO7O",
+          externalUrl: "so7o://focus",
           behaviorHints: {
             notWebReady: true,
             filename: "MKVDrama-OUO-Verification",
           },
-        },
-      ];
+        });
+      }
       streams.push({
         name: this.displayName,
         description: description,
@@ -737,6 +742,9 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
           redirects.map((redirect) => [redirect.id, redirect]),
         ).values(),
       ];
+      // The OUO interaction is finished once at least one valid destination
+      // has been resolved, even if the downstream ViewCrate/Filecrypt fetch fails.
+      if (ouos.length > 0) completeOuoVerificationForContent(providerContentId);
       if (ouos.length === 0) throw new OuoError("No ouo links found");
       const upsertOuosPromise = upsertOuos(ouos);
 
@@ -977,10 +985,44 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
         this.logger.warn(`MKVDrama OUO navigation did not complete: ${error}`);
       });
 
-      // Inspect the page, then wait for the user to complete Turnstile in
-      // the SO7O browser. Never submit an empty CAPTCHA response.
+      // Do not expose the Nuvio handoff merely because the URL is OUO.
+      // Wait until the page actually displays its human-click instruction.
       await new Promise((resolve) => setTimeout(resolve, 2000));
       let currentUrl = page.url();
+      let manualVerificationDetected = false;
+      const detectManualTurnstilePrompt = async () => {
+        if (!page || page.isClosed() || !matchesAnyHost(page.url(), OUO_HOSTS)) {
+          return false;
+        }
+        return page.evaluate(() => {
+          const bodyText = (document.body?.innerText || "")
+            .replace(/\\s+/g, " ")
+            .trim()
+            .toLowerCase();
+          return (
+            bodyText.includes("please click the captcha box") ||
+            bodyText.includes("click the captcha") ||
+            bodyText.includes("verify you are a human")
+          );
+        }).catch(() => false);
+      };
+      const publishManualVerification = () => {
+        if (manualVerificationDetected) return;
+        manualVerificationDetected = true;
+        markOuoVerificationRequired(providerContentId);
+        const verification = getOuoVerificationForContent(providerContentId);
+        verificationId = verification?.id;
+        if (verification) {
+          this.logger.warn(
+            `MKVDrama OUO requires manual verification | refresh the episode streams in Nuvio and open the MKVDrama CAPTCHA item | challenge=${verification.id}`,
+          );
+        } else {
+          this.logger.warn(
+            "MKVDrama OUO requires manual verification | no active verification session was found",
+          );
+        }
+      };
+
       if (matchesAnyHost(currentUrl, OUO_HOSTS)) {
         const diagnostics = await page.evaluate(() => ({
           title: document.title,
@@ -1009,18 +1051,7 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
         this.logger.log(
           `MKVDrama OUO page diagnostics | ${JSON.stringify(diagnostics)}`,
         );
-        markOuoVerificationRequired(providerContentId);
-        const verification = getOuoVerificationForContent(providerContentId);
-        verificationId = verification?.id;
-        if (verification) {
-          this.logger.warn(
-            `MKVDrama OUO requires manual verification | open the MKVDrama CAPTCHA item in Nuvio | verification page: ${verification.pageUrl}`,
-          );
-        } else {
-          this.logger.warn(
-            "MKVDrama OUO requires manual verification | no active verification session was found",
-          );
-        }
+        if (await detectManualTurnstilePrompt()) publishManualVerification();
       }
 
       const deadline = Date.now() + 120000;
@@ -1058,6 +1089,13 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
           continue;
         }
         currentUrl = page.url();
+        if (
+          !manualVerificationDetected &&
+          matchesAnyHost(currentUrl, OUO_HOSTS) &&
+          await detectManualTurnstilePrompt()
+        ) {
+          publishManualVerification();
+        }
         if (
           (currentUrl.startsWith("http://") || currentUrl.startsWith("https://")) &&
           !matchesAnyHost(currentUrl, OUO_HOSTS)
