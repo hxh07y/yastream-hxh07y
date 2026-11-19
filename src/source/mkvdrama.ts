@@ -13,7 +13,6 @@ import { uuidv7 } from "uuidv7";
 import { upsertStream } from "../db/queries.js";
 import {
   getMkvdrama,
-  deleteMkvdramaByProviderContentId,
   upsertMkvdrama as upsertMkvdramas,
 } from "../db/query/mkvdrama.js";
 import { upsertOuos } from "../db/query/ouo.js";
@@ -256,7 +255,7 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
               id: jobId,
               status: JOB_STATUS.PENDING,
               type: JOB_TYPE.MKVDRAMA_STREAM,
-              data: JSON.stringify({ mkvdramaId, content, forceRefresh: true }),
+              data: JSON.stringify({ mkvdramaId, content }),
             });
             description = `${total + 1} in queue\nWait about ${wait + 1} minutes`;
             break;
@@ -653,10 +652,6 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
     const content = jobData.content;
     const providerContentId = `${this.name}:${mkvdramaId}`;
 
-    if (jobData.forceRefresh) {
-      this.logger.warn(`MKVDrama targeted refresh | clearing cached OUO mappings | id=${providerContentId}`);
-      await deleteMkvdramaByProviderContentId(providerContentId);
-    }
     const dbMkvdrama = await this.getDbMkvdrama(providerContentId);
     let ouos: (EOuoInsert & { quality: Quality })[] = [];
     if (dbMkvdrama && dbMkvdrama.length > 0) {
