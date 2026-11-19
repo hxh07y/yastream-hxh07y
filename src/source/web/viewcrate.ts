@@ -225,10 +225,86 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
         } catch {
           // Keep extraction running; runtime diagnostics will show actual state.
         }
+
+        // Observe whether Viewcrate's own renderer progresses while the SO7O
+        // WebView is backgrounded. Keep this instrumentation passive and bounded.
+        const diagnosticWindow = window as typeof window & {
+          __viewcrateLifecycleDiag?: {
+            startedAt: number;
+            events: Array<Record<string, unknown>>;
+            mutationCount: number;
+            mutationSamples: Array<Record<string, unknown>>;
+            heartbeatCount: number;
+            lastHeartbeatAt: number;
+            observer?: MutationObserver;
+            heartbeat?: number;
+          };
+        };
+        const diag = {
+          startedAt: performance.now(),
+          events: [] as Array<Record<string, unknown>>,
+          mutationCount: 0,
+          mutationSamples: [] as Array<Record<string, unknown>>,
+          heartbeatCount: 0,
+          lastHeartbeatAt: performance.now(),
+          observer: undefined as MutationObserver | undefined,
+          heartbeat: undefined as number | undefined,
+        };
+        diagnosticWindow.__viewcrateLifecycleDiag = diag;
+
+        const snapshot = (name: string) => {
+          if (diag.events.length >= 30) return;
+          const section = document.querySelector("main > div:nth-child(3)[data-resolve-url]");
+          diag.events.push({
+            name,
+            atMs: Math.round(performance.now() - diag.startedAt),
+            readyState: document.readyState,
+            visibilityState: document.visibilityState,
+            hidden: document.hidden,
+            focused: document.hasFocus(),
+            sectionChildCount: section?.children.length ?? 0,
+          });
+        };
+        const attachSectionObserver = () => {
+          const section = document.querySelector("main > div:nth-child(3)[data-resolve-url]");
+          if (!section || diag.observer) return;
+          diag.observer = new MutationObserver((records) => {
+            diag.mutationCount += records.length;
+            if (diag.mutationSamples.length < 20) {
+              diag.mutationSamples.push({
+                atMs: Math.round(performance.now() - diag.startedAt),
+                records: records.length,
+                childCount: section.children.length,
+                hosterCount: section.querySelectorAll("div[class^='y_']").length,
+              });
+            }
+          });
+          diag.observer.observe(section, { childList: true, subtree: true, attributes: true });
+          snapshot("section-observer-attached");
+        };
+
+        snapshot("document-start");
+        for (const eventName of ["readystatechange", "DOMContentLoaded", "load", "visibilitychange", "focus", "blur"]) {
+          document.addEventListener(eventName, () => {
+            snapshot(eventName);
+            attachSectionObserver();
+          }, true);
+        }
+        if (document.documentElement) {
+          const rootObserver = new MutationObserver(() => attachSectionObserver());
+          rootObserver.observe(document.documentElement, { childList: true, subtree: true });
+          // The root observer is stored with the other observer for cleanup.
+          (diag as typeof diag & { rootObserver?: MutationObserver }).rootObserver = rootObserver;
+        }
+        diag.heartbeat = window.setInterval(() => {
+          diag.heartbeatCount += 1;
+          diag.lastHeartbeatAt = performance.now();
+          attachSectionObserver();
+        }, 1000);
       });
       removeVisibilityOverride = () =>
         page.removeScriptToEvaluateOnNewDocument(visibilityOverride.identifier);
-      logger.log("Viewcrate page-scoped visibility override installed");
+      logger.log("Viewcrate page-scoped visibility override and lifecycle diagnostics installed");
 
       let navigationResponse = await page.goto(url, {
         waitUntil: "domcontentloaded",
@@ -320,6 +396,24 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
               transferSize: resource.transferSize || 0,
             };
           });
+        const diag = (window as typeof window & {
+          __viewcrateLifecycleDiag?: {
+            startedAt: number;
+            events: Array<Record<string, unknown>>;
+            mutationCount: number;
+            mutationSamples: Array<Record<string, unknown>>;
+            heartbeatCount: number;
+            lastHeartbeatAt: number;
+          };
+        }).__viewcrateLifecycleDiag;
+        const lifecycle = diag ? {
+          elapsedMs: Math.round(performance.now() - diag.startedAt),
+          heartbeatCount: diag.heartbeatCount,
+          lastHeartbeatAtMs: Math.round(diag.lastHeartbeatAt - diag.startedAt),
+          mutationCount: diag.mutationCount,
+          mutationSamples: diag.mutationSamples,
+          events: diag.events,
+        } : null;
         return {
           visibilityState: document.visibilityState,
           hidden: document.hidden,
@@ -329,8 +423,9 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
           sectionChildCount: section?.children.length ?? 0,
           downloadHandlerBound: section?.getAttribute("data-download-handler-bound") === "true",
           bootstrapResource,
+          lifecycle,
         };
-      }).catch(() => ({ visibilityState: "unavailable", hidden: null, focused: null, visibilityOverride: true, readyState: "unavailable", sectionChildCount: -1, downloadHandlerBound: false, bootstrapResource: [] }));
+      }).catch(() => ({ visibilityState: "unavailable", hidden: null, focused: null, visibilityOverride: true, readyState: "unavailable", sectionChildCount: -1, downloadHandlerBound: false, bootstrapResource: [], lifecycle: null }));
       const html = await page.content();
       const status = navigationResponse?.status() ?? 0;
       const $ = cheerio.load(html);
@@ -405,6 +500,22 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
       return html;
     } finally {
       removeNetworkDiagnostics?.();
+      try {
+        await page?.evaluate(() => {
+          const diag = (window as typeof window & {
+            __viewcrateLifecycleDiag?: {
+              observer?: MutationObserver;
+              heartbeat?: number;
+              rootObserver?: MutationObserver;
+            };
+          }).__viewcrateLifecycleDiag;
+          if (diag?.heartbeat !== undefined) window.clearInterval(diag.heartbeat);
+          diag?.observer?.disconnect();
+          diag?.rootObserver?.disconnect();
+        });
+      } catch {
+        // The page may have navigated or detached during cleanup.
+      }
       if (removeVisibilityOverride) {
         try {
           await removeVisibilityOverride();
