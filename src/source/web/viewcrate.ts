@@ -62,6 +62,7 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
     const browser = await getBrowser();
     let removeNetworkDiagnostics: (() => void) | undefined;
     let removeVisibilityOverride: (() => Promise<void>) | undefined;
+    let removeLifecycleDiagnostics: (() => Promise<void>) | undefined;
     try {
       const pages = await browser.pages();
       // SO7O exposes its existing WebView rather than allowing new targets.
@@ -70,6 +71,18 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
       if (!page) {
         throw new ViewcrateError("SO7O does not expose an existing WebView page");
       }
+      removeLifecycleDiagnostics = () => page.evaluate(() => {
+        const diag = (window as typeof window & {
+          __viewcrateLifecycleDiag?: {
+            observer?: MutationObserver;
+            heartbeat?: number;
+            rootObserver?: MutationObserver;
+          };
+        }).__viewcrateLifecycleDiag;
+        if (diag?.heartbeat !== undefined) window.clearInterval(diag.heartbeat);
+        diag?.observer?.disconnect();
+        diag?.rootObserver?.disconnect();
+      });
 
       const safeUrl = (rawUrl: string) => {
         try {
@@ -501,18 +514,7 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
     } finally {
       removeNetworkDiagnostics?.();
       try {
-        await page?.evaluate(() => {
-          const diag = (window as typeof window & {
-            __viewcrateLifecycleDiag?: {
-              observer?: MutationObserver;
-              heartbeat?: number;
-              rootObserver?: MutationObserver;
-            };
-          }).__viewcrateLifecycleDiag;
-          if (diag?.heartbeat !== undefined) window.clearInterval(diag.heartbeat);
-          diag?.observer?.disconnect();
-          diag?.rootObserver?.disconnect();
-        });
+        await removeLifecycleDiagnostics?.();
       } catch {
         // The page may have navigated or detached during cleanup.
       }
