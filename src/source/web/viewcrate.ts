@@ -99,20 +99,20 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
         const responseUrl = response.url();
         if (!responseUrl.startsWith(VIEWCRATE_ORIGIN)) return;
         const path = new URL(responseUrl).pathname;
-        if (!/api|unlock|protect|password|resolve|\\/c\\//i.test(path)) return;
+        if (!/api|unlock|protect|password|resolve/i.test(path) && !path.includes("/c/")) return;
         logger.log(
           `Viewcrate network response | status=${response.status()} | type=${response.request().resourceType()} | contentType=${response.headers()["content-type"] || "unknown"} | url=${safeUrl(responseUrl)}`,
         );
 
         // Summarize bootstrap structure only; never log response values or secrets.
-        if (/\\/bootstrap\\/?$/i.test(path)) {
-          void response.json().then((payload) => {
-            const summarize = (value, depth = 0) => {
+        if (path.endsWith("/bootstrap")) {
+          void response.json().then((payload: unknown) => {
+            const summarize = (value: unknown, depth = 0): unknown => {
               if (Array.isArray(value)) return { type: "array", length: value.length };
               if (!value || typeof value !== "object") return typeof value;
               if (depth >= 2) return { type: "object", keys: Object.keys(value).slice(0, 30) };
-              const summary = {};
-              for (const [key, child] of Object.entries(value).slice(0, 30)) {
+              const summary: Record<string, unknown> = {};
+              for (const [key, child] of Object.entries(value as Record<string, unknown>).slice(0, 30)) {
                 if (typeof child === "boolean" && /protect|lock|error|success|password|valid/i.test(key)) summary[key] = child;
                 else if (Array.isArray(child)) summary[key] = { type: "array", length: child.length };
                 else if (child && typeof child === "object") summary[key] = summarize(child, depth + 1);
@@ -126,7 +126,7 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
           });
         }
       };
-            page.on("request", onViewcrateRequest);
+      page.on("request", onViewcrateRequest);
       page.on("response", onViewcrateResponse);
       removeNetworkDiagnostics = () => {
         page.off("request", onViewcrateRequest);
