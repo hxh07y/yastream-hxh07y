@@ -35,6 +35,26 @@ const logger = new Logger("SERVER");
 
 const stremio = new Hono();
 
+function isForceStreamRefreshRequest(c: {
+  req: {
+    query: (name: string) => string | undefined;
+    header: (name: string) => string | undefined;
+  };
+}) {
+  const refresh = (
+    c.req.query("refresh") ||
+    c.req.query("forceRefresh") ||
+    ""
+  ).toLowerCase();
+  const cacheControl = (c.req.header("cache-control") || "").toLowerCase();
+  const pragma = (c.req.header("pragma") || "").toLowerCase();
+  return (
+    ["1", "true", "yes"].includes(refresh) ||
+    cacheControl.includes("no-cache") ||
+    pragma.includes("no-cache")
+  );
+}
+
 export function getDescription(remaining: number) {
   const description = "Too Many Request\nRetry after";
   getRetryAfterText(remaining);
@@ -204,7 +224,11 @@ stremioRouteConfigs.forEach((config) => {
       return await buildMetaHandler(args);
     });
     builder.defineStreamHandler(async (args) => {
-      return await buildStreamHandler(args);
+      return await buildStreamHandler(
+        args,
+        undefined,
+        isForceStreamRefreshRequest(c),
+      );
     });
     builder.defineSubtitlesHandler(async (args) => {
       return await buildSubtitleHandler(args);
@@ -266,7 +290,11 @@ configStremioRoutes.forEach((route) => {
     }
     if (manifest.resources.includes("stream")) {
       builder.defineStreamHandler(async (args) => {
-        return await buildStreamHandler(args, config);
+        return await buildStreamHandler(
+          args,
+          config,
+          isForceStreamRefreshRequest(c),
+        );
       });
     }
     if (manifest.resources.includes("subtitles")) {
