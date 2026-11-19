@@ -1,4 +1,5 @@
 import { serve } from "@hono/node-server";
+import { INTERNAL_REQUEST_TOKEN } from "./utils/internal.js";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import analytics from "./api/router/analytics.js";
@@ -24,7 +25,9 @@ async function warmCache() {
   const warmUrls = ["/manifest.json", ...defaultCatalogUrls];
   await Promise.all(
     warmUrls.map((url) => {
-      fetch("http://localhost:" + PORT + url);
+      fetch("http://localhost:" + PORT + url, {
+        headers: { "x-yastream-internal-token": INTERNAL_REQUEST_TOKEN },
+      });
     }),
   );
 }
