@@ -996,7 +996,7 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
         }
         return page.evaluate(() => {
           const bodyText = (document.body?.innerText || "")
-            .replace(/\\s+/g, " ")
+            .replace(/\s+/g, " ")
             .trim()
             .toLowerCase();
           return (
@@ -1044,7 +1044,7 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
               ),
           })),
           bodyText: (document.body?.innerText || "")
-            .replace(/\\s+/g, " ")
+            .replace(/\s+/g, " ")
             .trim()
             .slice(0, 500),
         })).catch((error) => ({ inspectionError: String(error) }));
