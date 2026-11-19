@@ -1059,7 +1059,7 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
         }
         currentUrl = page.url();
         if (
-          /^https?:\\/\\//i.test(currentUrl) &&
+          (currentUrl.startsWith("http://") || currentUrl.startsWith("https://")) &&
           !matchesAnyHost(currentUrl, OUO_HOSTS)
         ) {
           this.logger.log(`MKVDrama OUO resolved | url=${currentUrl}`);
