@@ -153,6 +153,12 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
       const sectionHosters = $dlcSection.find("div[class^='y_']").length;
       const documentHosters = $("div[class^='y_']").length;
       const pageText = $("body").text().replace(/\s+/g, " ").trim();
+      const sectionPreview = $dlcSection.text().replace(/\s+/g, " ").trim().slice(0, 250);
+      const sectionChildren = $dlcSection.children().map((_, element) => {
+        const tag = (element as any).tagName || "node";
+        const className = $(element).attr("class") || "";
+        return className ? `${tag}.${className}` : tag;
+      }).get().slice(0, 12);
       const formSummary = $("form").map((_, form) => ({
         action: $(form).attr("action") || "",
         fields: $(form).find("input").map((__, input) => ({
@@ -170,7 +176,7 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
       }
 
       logger.log(
-        `Viewcrate browser page ready | status=${status} | bytes=${Buffer.byteLength(html)} | episodeHosters=${sectionHosters} | documentHosters=${documentHosters} | protectedText=${pageText.toLowerCase().includes("protected content")} | forms=${formSummary.length}`,
+        `Viewcrate browser page ready | status=${status} | bytes=${Buffer.byteLength(html)} | episodeHosters=${sectionHosters} | documentHosters=${documentHosters} | protectedText=${pageText.toLowerCase().includes("protected content")} | passwordProvided=${Boolean(password)} | forms=${formSummary.length} | sectionPreview=${sectionPreview} | sectionChildren=${JSON.stringify(sectionChildren)}`,
       );
       return html;
     } finally {
