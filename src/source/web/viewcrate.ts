@@ -33,8 +33,13 @@ export async function getUrlsFromViewcrateDlc(url: string, password?: string) {
   // const html = await axiosGet<string>(url);
   const html = await getViewcrateHtml(url, password);
   if (!html) throw new ViewcrateError("No html");
-  if (html.toLowerCase().includes("protected content")) {
-    throw new ViewcrateError("Protected content");
+  const pageText = cheerio.load(html)("body").text().toLowerCase();
+  const extractedHosterCount = getEpisodeHosters(html).reduce(
+    (total, episode) => total + episode.data.length,
+    0,
+  );
+  if (pageText.includes("protected content") && extractedHosterCount === 0) {
+    throw new ViewcrateError("Protected content (no episode hosters rendered)");
   }
   const link = await getDlcUrl(html);
   if (!link) throw new ViewcrateError("No dlc link");
@@ -63,7 +68,7 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
         throw new ViewcrateError("SO7O does not expose an existing WebView page");
       }
 
-      const navigationResponse = await page.goto(url, {
+      let navigationResponse = await page.goto(url, {
         waitUntil: "domcontentloaded",
         timeout: 60000,
       });
@@ -117,7 +122,7 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
             return true;
           }, password);
           if (submitted) {
-            await navigation;
+            navigationResponse = (await navigation) || navigationResponse;
             await page.waitForSelector(
               "main > div:nth-child(3)[data-resolve-url]",
               { timeout: 20000 },
@@ -147,7 +152,7 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
       const hasDlcSection = Boolean($dlcSection.attr("data-resolve-url"));
       const sectionHosters = $dlcSection.find("div[class^='y_']").length;
       const documentHosters = $("div[class^='y_']").length;
-      const pageText = $("body").text().replace(/\\s+/g, " ").trim();
+      const pageText = $("body").text().replace(/\s+/g, " ").trim();
       const formSummary = $("form").map((_, form) => ({
         action: $(form).attr("action") || "",
         fields: $(form).find("input").map((__, input) => ({
