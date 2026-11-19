@@ -539,6 +539,7 @@ export async function buildStreamHandler(
             content,
             config,
             forceProviderRefresh && provider.name === Provider.MKVDRAMA,
+            bypassCache && provider.name === Provider.MKVDRAMA,
           );
         }),
       )
