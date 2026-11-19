@@ -74,8 +74,8 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
       removeLifecycleDiagnostics = () => page.evaluate(() => {
         const diag = (window as typeof window & {
           __viewcrateLifecycleDiag?: {
-            observer?: MutationObserver;
-            heartbeat?: number;
+            observer?: MutationObserver | undefined;
+            heartbeat?: number | undefined;
             rootObserver?: MutationObserver;
           };
         }).__viewcrateLifecycleDiag;
