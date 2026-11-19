@@ -159,12 +159,15 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
                 const fields = payload && typeof payload === "object" && !Array.isArray(payload)
                   ? Object.fromEntries(Object.entries(payload).map(([key, value]) => [key, describe(value)]))
                   : describe(payload);
-                const fingerprints = payload && typeof payload === "object" && !Array.isArray(payload)
-                  ? Object.fromEntries(["k", "i", "c"].flatMap((key) => {
-                      const value = (payload as Record<string, unknown>)[key];
-                      return typeof value === "string" ? [[key, { length: value.length, sha256: hashValue(value) }]] : [];
-                    }))
-                  : {};
+                const fingerprints: Record<string, { length: number; sha256: string }> = {};
+                if (payload && typeof payload === "object" && !Array.isArray(payload)) {
+                  for (const key of ["k", "i", "c"]) {
+                    const value = (payload as Record<string, unknown>)[key];
+                    if (typeof value === "string") {
+                      fingerprints[key] = { length: value.length, sha256: hashValue(value) };
+                    }
+                  }
+                }
                 logger.log(
                   `Viewcrate bootstrap structure | status=${response.status()} | bytes=${Buffer.byteLength(body)} | parsedJson=${Boolean(payload)} | structure=${JSON.stringify(fields)} | fingerprints=${JSON.stringify(fingerprints)}`,
                 );
