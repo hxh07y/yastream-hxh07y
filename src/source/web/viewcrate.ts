@@ -217,8 +217,12 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
           error instanceof Error
             ? `${error.name}: ${error.message}`
             : String(error);
+        const stack =
+          error instanceof Error && error.stack
+            ? error.stack.split("\n").slice(0, 6).map((line) => safeConsoleText(line)).join(" | ")
+            : "unavailable";
         logger.warn(
-          `Viewcrate page JavaScript error | ${message.slice(0, 200)}`,
+          `Viewcrate page JavaScript error | ${message.slice(0, 200)} | stack=${stack}`,
         );
       };
       page.on("request", onViewcrateRequest);
@@ -238,6 +242,52 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
       // believes it is hidden. Override visibility only in this page, before
       // navigation, so its own scripts initialize as if the document were visible.
       const visibilityOverride = await page.evaluateOnNewDocument(() => {
+        // Keep a small, value-free timeline of DOM changes so we can see when
+        // the protected placeholder or episode hosters appear.
+        const timeline: Array<Record<string, unknown>> = [];
+        const startedAt = performance.now();
+        const snapshot = () => {
+          const section = document.querySelector("main > div:nth-child(3)[data-resolve-url]");
+          const bodyText = document.body?.innerText?.toLowerCase() || "";
+          const state = {
+            atMs: Math.round(performance.now() - startedAt),
+            bootstrapResponseEndMs: Math.round(
+              performance.getEntriesByType("resource")
+                .filter((entry) => entry.name.includes("/bootstrap"))
+                .reduce((latest, entry) => Math.max(latest, (entry as PerformanceResourceTiming).responseEnd || 0), 0),
+            ),
+            readyState: document.readyState,
+            sectionPresent: Boolean(section),
+            sectionChildren: section?.children.length || 0,
+            hosterCount: section?.querySelectorAll("div[class^='y_']").length || 0,
+            protectedContent: bodyText.includes("protected content"),
+            downloadHandlerBound: section?.getAttribute("data-download-handler-bound") === "true",
+          };
+          const previous = timeline[timeline.length - 1];
+          if (
+            !previous ||
+            previous.sectionPresent !== state.sectionPresent ||
+            previous.sectionChildren !== state.sectionChildren ||
+            previous.hosterCount !== state.hosterCount ||
+            previous.protectedContent !== state.protectedContent ||
+            previous.downloadHandlerBound !== state.downloadHandlerBound
+          ) {
+            if (timeline.length < 40) timeline.push(state);
+          }
+        };
+        const record = () => {
+          try { snapshot(); } catch { /* diagnostics must not affect page execution */ }
+        };
+        const observer = new MutationObserver(record);
+        const startObserver = () => {
+          if (document.documentElement) {
+            observer.observe(document.documentElement, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ["data-download-handler-bound"] });
+          }
+          record();
+        };
+        if (document.documentElement) startObserver();
+        else document.addEventListener("DOMContentLoaded", startObserver, { once: true });
+        (window as any).__viewcrateRuntimeDiagnostics = { timeline, getSnapshot: record };
         try {
           Object.defineProperty(Document.prototype, "visibilityState", {
             configurable: true,
@@ -363,6 +413,26 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
           bootstrapResource,
         };
       }).catch(() => ({ visibilityState: "unavailable", hidden: null, focused: null, visibilityOverride: true, readyState: "unavailable", sectionChildCount: -1, downloadHandlerBound: false, bootstrapResource: [], render: null }));
+      const runtimeTimeline = await page.evaluate(() => {
+        const diagnostics = (window as any).__viewcrateRuntimeDiagnostics;
+        diagnostics?.getSnapshot?.();
+        return Array.isArray(diagnostics?.timeline) ? diagnostics.timeline : [];
+      }).catch(() => []);
+      if (runtimeTimeline.length) {
+        logger.log(`Viewcrate DOM mutation timeline | events=${JSON.stringify(runtimeTimeline)}`);
+        const firstMutation = runtimeTimeline[0];
+        const bootstrapResponseEndMs = Number(runtimeTimeline[runtimeTimeline.length - 1].bootstrapResponseEndMs || 0);
+        const firstPostBootstrapMutation = runtimeTimeline.find((event: any) =>
+          Number(event.atMs) >= bootstrapResponseEndMs && bootstrapResponseEndMs > 0,
+        );
+        const protectedContentEvent = runtimeTimeline.find((event: any) => event.protectedContent === true);
+        const hosterRenderEvent = runtimeTimeline.find((event: any) => Number(event.hosterCount) > 0);
+        logger.log(
+          `Viewcrate bootstrap runtime markers | firstMutationMs=${firstMutation?.atMs ?? "none"} | bootstrapResponseEndMs=${bootstrapResponseEndMs || "unavailable"} | firstPostBootstrapMutationMs=${firstPostBootstrapMutation?.atMs ?? "none"} | protectedContentMs=${protectedContentEvent?.atMs ?? "never"} | firstHosterRenderMs=${hosterRenderEvent?.atMs ?? "never"}`,
+        );
+      } else {
+        logger.warn("Viewcrate DOM mutation timeline unavailable or empty");
+      }
       await Promise.allSettled(responseDiagnosticTasks);
       const html = await page.content();
       const status = navigationResponse?.status() ?? 0;
