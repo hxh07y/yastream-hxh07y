@@ -178,12 +178,16 @@ export async function getCountProviderContent() {
 // STREAMS
 export async function upsertStream(rows: StreamInsert[]) {
   if (!db) return;
+  // A scraper can rediscover an existing URL with a newly generated UUID.
+  // The URL is the table's natural unique key, so collapse duplicates in the
+  // batch and update the existing row instead of violating uq_stream_url.
+  const uniqueRows = [...new Map(rows.map((row) => [row.url, row])).values()];
   try {
     await db
       .insert(stream)
-      .values(rows)
+      .values(uniqueRows)
       .onConflictDoUpdate({
-        target: stream.id,
+        target: stream.url,
         set: {
           providerContentId: sql.raw(
             `excluded.${stream.providerContentId.name}`,
@@ -200,12 +204,18 @@ export async function upsertStream(rows: StreamInsert[]) {
           ttl: sql.raw(`excluded.${stream.ttl.name}`),
         },
       });
-    const row = rows[0];
+    const row = uniqueRows[0];
     logger.debug(
-      `Upserted streams ${row?.providerContentId}:${row?.season}:${row?.episode}`,
+      `Upserted streams ${row?.providerContentId}:${row?.season}:${row?.episode} | rows=${uniqueRows.length}`,
     );
-  } catch (e) {
-    const row = rows[0];
+  } catch (e: any) {
+    const row = uniqueRows[0];
+    const code = e?.code ?? e?.cause?.code ?? "unknown";
+    const constraint = e?.constraint ?? e?.cause?.constraint ?? "unknown";
+    const detail = e?.detail ?? e?.cause?.detail ?? e?.cause?.message ?? "none";
+    logger.error(
+      `Postgres stream upsert diagnostic | code=${code} | constraint=${constraint} | detail=${detail}`,
+    );
     handleError(
       e,
       logger,
