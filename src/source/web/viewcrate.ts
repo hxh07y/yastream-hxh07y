@@ -62,7 +62,6 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
     const browser = await getBrowser();
     let removeNetworkDiagnostics: (() => void) | undefined;
     let removeVisibilityOverride: (() => Promise<void>) | undefined;
-    let removeLifecycleDiagnostics: (() => Promise<void>) | undefined;
     try {
       const pages = await browser.pages();
       // SO7O exposes its existing WebView rather than allowing new targets.
@@ -71,18 +70,6 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
       if (!page) {
         throw new ViewcrateError("SO7O does not expose an existing WebView page");
       }
-      removeLifecycleDiagnostics = () => page.evaluate(() => {
-        const diag = (window as typeof window & {
-          __viewcrateLifecycleDiag?: {
-            observer?: MutationObserver | undefined;
-            heartbeat?: number | undefined;
-            rootObserver?: MutationObserver;
-          };
-        }).__viewcrateLifecycleDiag;
-        if (diag?.heartbeat !== undefined) window.clearInterval(diag.heartbeat);
-        diag?.observer?.disconnect();
-        diag?.rootObserver?.disconnect();
-      });
 
       const safeUrl = (rawUrl: string) => {
         try {
@@ -239,81 +226,135 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
           // Keep extraction running; runtime diagnostics will show actual state.
         }
 
-        // Observe whether Viewcrate's own renderer progresses while the SO7O
-        // WebView is backgrounded. Keep this instrumentation passive and bounded.
-        const diagnosticWindow = window as typeof window & {
-          __viewcrateLifecycleDiag?: {
+        // Track the exact transition of the DLC section, and capture the
+        // JavaScript call site when page code mutates that section.
+        const renderWindow = window as typeof window & {
+          __viewcrateRenderDiag?: {
             startedAt: number;
-            events: Array<Record<string, unknown>>;
-            mutationCount: number;
-            mutationSamples: Array<Record<string, unknown>>;
-            heartbeatCount: number;
-            lastHeartbeatAt: number;
-            observer?: MutationObserver | undefined;
-            heartbeat?: number | undefined;
+            section?: Element;
+            mutations: Array<Record<string, unknown>>;
+            operations: Array<Record<string, unknown>>;
+            rootObserver?: MutationObserver;
+            sectionObserver?: MutationObserver;
+            restorers: Array<() => void>;
           };
         };
         const diag = {
           startedAt: performance.now(),
-          events: [] as Array<Record<string, unknown>>,
-          mutationCount: 0,
-          mutationSamples: [] as Array<Record<string, unknown>>,
-          heartbeatCount: 0,
-          lastHeartbeatAt: performance.now(),
-          observer: undefined as MutationObserver | undefined,
-          heartbeat: undefined as number | undefined,
+          section: undefined as Element | undefined,
+          mutations: [] as Array<Record<string, unknown>>,
+          operations: [] as Array<Record<string, unknown>>,
+          rootObserver: undefined as MutationObserver | undefined,
+          sectionObserver: undefined as MutationObserver | undefined,
+          restorers: [] as Array<() => void>,
         };
-        diagnosticWindow.__viewcrateLifecycleDiag = diag;
+        renderWindow.__viewcrateRenderDiag = diag;
 
-        const snapshot = (name: string) => {
-          if (diag.events.length >= 30) return;
-          const section = document.querySelector("main > div:nth-child(3)[data-resolve-url]");
-          diag.events.push({
-            name,
-            atMs: Math.round(performance.now() - diag.startedAt),
-            readyState: document.readyState,
-            visibilityState: document.visibilityState,
-            hidden: document.hidden,
-            focused: document.hasFocus(),
-            sectionChildCount: section?.children.length ?? 0,
-          });
-        };
-        const attachSectionObserver = () => {
-          const section = document.querySelector("main > div:nth-child(3)[data-resolve-url]");
-          if (!section || diag.observer) return;
-          diag.observer = new MutationObserver((records) => {
-            diag.mutationCount += records.length;
-            if (diag.mutationSamples.length < 20) {
-              diag.mutationSamples.push({
-                atMs: Math.round(performance.now() - diag.startedAt),
-                records: records.length,
-                childCount: section.children.length,
-                hosterCount: section.querySelectorAll("div[class^='y_']").length,
-              });
+        const safeFrame = (frame: string) =>
+          frame.replace(/https?:\\/\\/[^\\s)]+/g, (raw) => {
+            try {
+              const parsed = new URL(raw);
+              const path = parsed.pathname.split("/").map((part) =>
+                part.length > 32 || /^[a-f0-9]{24,}$/i.test(part) ? "[redacted]" : part
+              ).join("/");
+              return parsed.origin + path;
+            } catch {
+              return "[redacted-url]";
             }
           });
-          diag.observer.observe(section, { childList: true, subtree: true, attributes: true });
-          snapshot("section-observer-attached");
+
+        const sectionSnapshot = () => {
+          const section = diag.section;
+          if (!section) return { found: false };
+          const text = (section.textContent || "").replace(/\\s+/g, " ").trim();
+          return {
+            found: true,
+            childCount: section.children.length,
+            hosterCount: section.querySelectorAll("div[class^='y_']").length,
+            protectedMarker: /protected content/i.test(text),
+            textLength: text.length,
+            childTypes: Array.from(section.children).slice(0, 8).map((child) => ({
+              tag: child.tagName.toLowerCase(),
+              className: typeof child.className === "string" ? child.className.slice(0, 100) : "",
+            })),
+          };
         };
 
-        snapshot("document-start");
-        for (const eventName of ["readystatechange", "DOMContentLoaded", "load", "visibilitychange", "focus", "blur"]) {
-          document.addEventListener(eventName, () => {
-            snapshot(eventName);
-            attachSectionObserver();
-          }, true);
+        const recordOperation = (operation: string, target: Node) => {
+          const section = diag.section;
+          if (!section || diag.operations.length >= 20) return;
+          if (target !== section && !section.contains(target)) return;
+          const stack = String(new Error().stack || "").split("\\n").slice(2, 7).map(safeFrame);
+          diag.operations.push({
+            atMs: Math.round(performance.now() - diag.startedAt),
+            operation,
+            target: target.nodeName,
+            stack,
+          });
+        };
+
+        const wrapMethod = (prototype: any, name: string) => {
+          const original = prototype?.[name];
+          if (typeof original !== "function") return;
+          const wrapped = function(this: Node, ...args: unknown[]) {
+            try { recordOperation(name, this); } catch { /* diagnostics must not affect rendering */ }
+            return original.apply(this, args);
+          };
+          prototype[name] = wrapped;
+          diag.restorers.push(() => {
+            if (prototype[name] === wrapped) prototype[name] = original;
+          });
+        };
+
+        const wrapSetter = (prototype: any, name: string) => {
+          const descriptor = Object.getOwnPropertyDescriptor(prototype, name);
+          if (!descriptor?.set || !descriptor.configurable) return;
+          const wrapped = function(this: Node, value: unknown) {
+            try { recordOperation(name + "=", this); } catch { /* diagnostics must not affect rendering */ }
+            return descriptor.set!.call(this, value);
+          };
+          Object.defineProperty(prototype, name, { ...descriptor, set: wrapped });
+          diag.restorers.push(() => {
+            const current = Object.getOwnPropertyDescriptor(prototype, name);
+            if (current?.set === wrapped) Object.defineProperty(prototype, name, descriptor);
+          });
+        };
+
+        const attachSectionObserver = () => {
+          if (diag.sectionObserver) return;
+          const section = document.querySelector("main > div:nth-child(3)[data-resolve-url]");
+          if (!section) return;
+          diag.section = section;
+          diag.sectionObserver = new MutationObserver((records) => {
+            if (diag.mutations.length >= 30) return;
+            diag.mutations.push({
+              atMs: Math.round(performance.now() - diag.startedAt),
+              records: records.length,
+              types: Array.from(new Set(records.map((record) => record.type))),
+              state: sectionSnapshot(),
+            });
+          });
+          diag.sectionObserver.observe(section, {
+            childList: true, subtree: true, attributes: true, characterData: true,
+          });
+        };
+
+        // These wrappers only record operations targeting the DLC section or
+        // descendants; native methods and their return values are preserved.
+        for (const name of ["appendChild", "insertBefore", "removeChild", "replaceChild"]) {
+          wrapMethod(Node.prototype, name);
         }
+        for (const name of ["replaceChildren", "append", "prepend", "replaceWith", "remove", "insertAdjacentHTML", "insertAdjacentText"]) {
+          wrapMethod(Element.prototype, name);
+        }
+        wrapSetter(Element.prototype, "innerHTML");
+        wrapSetter(Node.prototype, "textContent");
+
+        diag.rootObserver = new MutationObserver(() => attachSectionObserver());
         if (document.documentElement) {
-          const rootObserver = new MutationObserver(() => attachSectionObserver());
-          rootObserver.observe(document.documentElement, { childList: true, subtree: true });
-          // The root observer is stored with the other observer for cleanup.
-          (diag as typeof diag & { rootObserver?: MutationObserver }).rootObserver = rootObserver;
+          diag.rootObserver.observe(document.documentElement, { childList: true, subtree: true });
         }
-        diag.heartbeat = window.setInterval(() => {
-          diag.heartbeatCount += 1;
-          diag.lastHeartbeatAt = performance.now();
-          attachSectionObserver();
-        }, 1000);
+        attachSectionObserver();
       });
       removeVisibilityOverride = () =>
         page.removeScriptToEvaluateOnNewDocument(visibilityOverride.identifier);
@@ -410,22 +451,16 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
             };
           });
         const diag = (window as typeof window & {
-          __viewcrateLifecycleDiag?: {
+          __viewcrateRenderDiag?: {
             startedAt: number;
-            events: Array<Record<string, unknown>>;
-            mutationCount: number;
-            mutationSamples: Array<Record<string, unknown>>;
-            heartbeatCount: number;
-            lastHeartbeatAt: number;
+            mutations: Array<Record<string, unknown>>;
+            operations: Array<Record<string, unknown>>;
           };
-        }).__viewcrateLifecycleDiag;
-        const lifecycle = diag ? {
+        }).__viewcrateRenderDiag;
+        const render = diag ? {
           elapsedMs: Math.round(performance.now() - diag.startedAt),
-          heartbeatCount: diag.heartbeatCount,
-          lastHeartbeatAtMs: Math.round(diag.lastHeartbeatAt - diag.startedAt),
-          mutationCount: diag.mutationCount,
-          mutationSamples: diag.mutationSamples,
-          events: diag.events,
+          mutations: diag.mutations,
+          operations: diag.operations,
         } : null;
         return {
           visibilityState: document.visibilityState,
@@ -436,7 +471,7 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
           sectionChildCount: section?.children.length ?? 0,
           downloadHandlerBound: section?.getAttribute("data-download-handler-bound") === "true",
           bootstrapResource,
-          lifecycle,
+          render,
         };
       }).catch(() => ({ visibilityState: "unavailable", hidden: null, focused: null, visibilityOverride: true, readyState: "unavailable", sectionChildCount: -1, downloadHandlerBound: false, bootstrapResource: [], lifecycle: null }));
       const html = await page.content();
@@ -464,34 +499,6 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
           $(button).text().trim() || $(button).attr("value") || "",
         ).get(),
       })).get();
-      const scriptDiagnostics = await page.evaluate(() => {
-        const scripts = Array.from(document.scripts);
-        const inlineText = scripts
-          .filter((script) => !script.src)
-          .map((script) => script.textContent || "")
-          .join("\\n")
-          .toLowerCase();
-        return {
-          externalScripts: scripts
-            .filter((script) => Boolean(script.src))
-            .map((script) => {
-              try {
-                return new URL(script.src, location.href).pathname;
-              } catch {
-                return "[invalid-script-url]";
-              }
-            })
-            .slice(0, 30),
-          inlineScriptCount: scripts.filter((script) => !script.src).length,
-          inlineHints: {
-            password: inlineText.includes("password"),
-            protected: inlineText.includes("protected"),
-            csrf: inlineText.includes("csrf"),
-            unlock: inlineText.includes("unlock"),
-            resolve: inlineText.includes("resolve"),
-          },
-        };
-      });
       const sectionAttributes = $dlcSection.length
         ? { ...($dlcSection[0] as any).attribs }
         : {};
@@ -507,14 +514,25 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
       logger.log(
         `Viewcrate browser page ready | status=${status} | bytes=${Buffer.byteLength(html)} | episodeHosters=${sectionHosters} | documentHosters=${documentHosters} | protectedText=${pageText.toLowerCase().includes("protected content")} | passwordProvided=${Boolean(password)} | forms=${formSummary.length} | sectionPreview=${sectionPreview} | sectionChildren=${JSON.stringify(sectionChildren)} | sectionAttributes=${JSON.stringify(sectionAttributes)} | pageRuntimeState=${JSON.stringify(pageRuntimeState)}`,
       );
-      logger.log(
-        `Viewcrate unlock diagnostics | page=${safeUrl(page.url())} | forms=${JSON.stringify(formSummary)} | scripts=${JSON.stringify(scriptDiagnostics)}`,
-      );
       return html;
     } finally {
       removeNetworkDiagnostics?.();
       try {
-        await removeLifecycleDiagnostics?.();
+        await page.evaluate(() => {
+          const diag = (window as typeof window & {
+            __viewcrateRenderDiag?: {
+              rootObserver?: MutationObserver;
+              sectionObserver?: MutationObserver;
+              restorers: Array<() => void>;
+            };
+          }).__viewcrateRenderDiag;
+          diag?.rootObserver?.disconnect();
+          diag?.sectionObserver?.disconnect();
+          for (const restore of diag?.restorers || []) {
+            try { restore(); } catch { /* best-effort restoration */ }
+          }
+          delete (window as typeof window & { __viewcrateRenderDiag?: unknown }).__viewcrateRenderDiag;
+        });
       } catch {
         // The page may have navigated or detached during cleanup.
       }
