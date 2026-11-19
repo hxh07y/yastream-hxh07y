@@ -115,68 +115,6 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
           `Viewcrate network response | status=${response.status()} | type=${response.request().resourceType()} | contentType=${response.headers()["content-type"] || "unknown"} | url=${safeUrl(responseUrl)}`,
         );
 
-        // Summarize bootstrap structure only; never log response values or secrets.
-        if (path.endsWith("/bootstrap")) {
-          void response.json().then((payload: unknown) => {
-            const summarize = (value: unknown, depth = 0): unknown => {
-              if (Array.isArray(value)) return { type: "array", length: value.length };
-              if (!value || typeof value !== "object") return typeof value;
-              if (depth >= 2) return { type: "object", keys: Object.keys(value).slice(0, 30) };
-              const summary: Record<string, unknown> = {};
-              for (const [key, child] of Object.entries(value as Record<string, unknown>).slice(0, 30)) {
-                if (typeof child === "boolean" && /protect|lock|error|success|password|valid/i.test(key)) summary[key] = child;
-                else if (Array.isArray(child)) summary[key] = { type: "array", length: child.length };
-                else if (child && typeof child === "object") summary[key] = summarize(child, depth + 1);
-                else summary[key] = typeof child;
-              }
-              return summary;
-            };
-            const describeFingerprint = (value: unknown, depth = 0): unknown => {
-              if (typeof value === "string") {
-                return {
-                  type: "string",
-                  length: value.length,
-                  sha256: crypto.createHash("sha256").update(value).digest("hex").slice(0, 16),
-                };
-              }
-              if (Array.isArray(value)) {
-                return {
-                  type: "array",
-                  length: value.length,
-                  items: depth < 2 ? value.slice(0, 4).map((item) => describeFingerprint(item, depth + 1)) : undefined,
-                };
-              }
-              if (value && typeof value === "object") {
-                const entries = Object.entries(value as Record<string, unknown>).slice(0, 20);
-                return {
-                  type: "object",
-                  keys: entries.map(([key]) => key),
-                  fields: depth < 2
-                    ? Object.fromEntries(entries.map(([key, child]) => [key, describeFingerprint(child, depth + 1)]))
-                    : undefined,
-                };
-              }
-              return { type: typeof value };
-            };
-            const bootstrapRecord =
-              payload && typeof payload === "object" && !Array.isArray(payload)
-                ? (payload as Record<string, unknown>)
-                : {};
-            const serializedPayload = JSON.stringify(payload);
-            const fieldFingerprints = Object.fromEntries(
-              ["k", "i", "c", "r"].filter((key) => key in bootstrapRecord)
-                .map((key) => [key, describeFingerprint(bootstrapRecord[key])]),
-            );
-            logger.log(
-              "Viewcrate bootstrap diagnostic | shape=" + JSON.stringify(summarize(payload)) +
-              " | payloadBytes=" + Buffer.byteLength(serializedPayload || "") +
-              " | payloadSha256=" + crypto.createHash("sha256").update(serializedPayload || "").digest("hex").slice(0, 16) +
-              " | fieldFingerprints=" + JSON.stringify(fieldFingerprints),
-            );
-          }).catch((error) => {
-            logger.warn("Viewcrate bootstrap diagnostic unavailable | reason=" + String(error).slice(0, 120));
-          });
-        }
       };
       const onViewcrateRequestFailed = (request: HTTPRequest) => {
         if (!request.url().startsWith(VIEWCRATE_ORIGIN)) return;
@@ -251,7 +189,7 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
         renderWindow.__viewcrateRenderDiag = diag;
 
         const safeFrame = (frame: string) =>
-          frame.replace(/https?:\\/\\/[^\\s)]+/g, (raw) => {
+          frame.replace(/https?:\/\/[^\s)]+/g, (raw) => {
             try {
               const parsed = new URL(raw);
               const path = parsed.pathname.split("/").map((part) =>
@@ -266,7 +204,7 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
         const sectionSnapshot = () => {
           const section = diag.section;
           if (!section) return { found: false };
-          const text = (section.textContent || "").replace(/\\s+/g, " ").trim();
+          const text = (section.textContent || "").replace(/\s+/g, " ").trim();
           return {
             found: true,
             childCount: section.children.length,
@@ -283,8 +221,8 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
         const recordOperation = (operation: string, target: Node) => {
           const section = diag.section;
           if (!section || diag.operations.length >= 20) return;
-          if (target !== section && !section.contains(target)) return;
-          const stack = String(new Error().stack || "").split("\\n").slice(2, 7).map(safeFrame);
+          if (target !== section && target !== section.parentNode && !section.contains(target)) return;
+          const stack = String(new Error().stack || "").split("\n").slice(2, 7).map(safeFrame);
           diag.operations.push({
             atMs: Math.round(performance.now() - diag.startedAt),
             operation,
@@ -321,9 +259,9 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
         };
 
         const attachSectionObserver = () => {
-          if (diag.sectionObserver) return;
           const section = document.querySelector("main > div:nth-child(3)[data-resolve-url]");
-          if (!section) return;
+          if (!section || section === diag.section) return;
+          diag.sectionObserver?.disconnect();
           diag.section = section;
           diag.sectionObserver = new MutationObserver((records) => {
             if (diag.mutations.length >= 30) return;
@@ -358,7 +296,7 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
       });
       removeVisibilityOverride = () =>
         page.removeScriptToEvaluateOnNewDocument(visibilityOverride.identifier);
-      logger.log("Viewcrate page-scoped visibility override and lifecycle diagnostics installed");
+      logger.log("Viewcrate page-scoped visibility override and render diagnostics installed");
 
       let navigationResponse = await page.goto(url, {
         waitUntil: "domcontentloaded",
