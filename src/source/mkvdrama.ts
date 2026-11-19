@@ -196,6 +196,7 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
     content: ContentDetail,
     config: UserConfig,
     forceRefresh = false,
+    bypassCache = false,
   ): Promise<Stream[]> {
     try {
       const { title, type, year, id, season } = content;
@@ -251,7 +252,8 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
         }];
       };
 
-      const cacheStreams: Stream[] = cache.get(streamKey);
+      if (bypassCache) cache.delete(streamKey);
+      const cacheStreams: Stream[] = bypassCache ? null : cache.get(streamKey);
       if (cacheStreams) return [...getCaptchaItem(), ...cacheStreams];
       const dbStreams = await StreamService.getDbStreams(
         `${this.name}:${mkvdramaId}`,
