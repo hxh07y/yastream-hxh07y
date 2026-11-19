@@ -16,7 +16,6 @@ import { ntfy } from "../../utils/notify/ntfy.js";
 export interface JobMkvdramaStream {
   mkvdramaId: string;
   content: ContentDetail;
-  forceRefresh?: boolean;
 }
 export interface JobMkvdramaScrape {
   pageUrl: string;
