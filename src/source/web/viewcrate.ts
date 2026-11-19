@@ -60,6 +60,11 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
 
   return withCdpPageLock("Viewcrate DLC extraction", async () => {
     const browser = await getBrowser();
+    const pages = await browser.pages();
+    const page = pages[0];
+    if (!page) {
+      throw new Error("SO7O CDP did not expose an existing WebView page");
+    }
     let removeNetworkDiagnostics: (() => void) | undefined;
     let removeVisibilityOverride: (() => Promise<void>) | undefined;
     const responseDiagnosticTasks: Promise<void>[] = [];
