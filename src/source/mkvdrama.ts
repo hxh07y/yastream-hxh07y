@@ -11,7 +11,7 @@ import * as cheerio from "cheerio";
 import { CookieData, Page } from "puppeteer";
 import { uuidv7 } from "uuidv7";
 import {
-  deleteStreamsByProviderContentEpisode,
+  deleteStreamsByProviderContentId,
   upsertStream,
 } from "../db/queries.js";
 import {
@@ -217,11 +217,9 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
           `Forced stream refresh | content=${providerContentId} | season=1 | episode=${episode}`,
         );
         cache.delete(streamKey);
-        await deleteStreamsByProviderContentEpisode(
-          providerContentId,
-          1,
-          episode,
-        );
+        // This job rebuilds the complete series, not only the requested
+        // episode, so clear the series rows before repopulating all episodes.
+        await deleteStreamsByProviderContentId(providerContentId);
         // Remove saved OUO destinations too, so the next job re-reads the
         // current MKVDrama download links and resolves the mirrors again.
         await deleteMkvdramaByProviderContentId(providerContentId);
