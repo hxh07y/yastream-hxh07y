@@ -91,6 +91,11 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
         const requestUrl = request.url();
         if (!requestUrl.startsWith(VIEWCRATE_ORIGIN)) return;
         const path = new URL(requestUrl).pathname;
+        if (request.resourceType() === "script") {
+          logger.log(
+            `Viewcrate script request | method=${request.method()} | url=${safeUrl(requestUrl)}`,
+          );
+        }
         if (!/api|unlock|protect|password|resolve|\/c\//i.test(path)) return;
         logger.log(
           `Viewcrate network request | method=${request.method()} | type=${request.resourceType()} | url=${safeUrl(requestUrl)}`,
@@ -100,6 +105,11 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
         const responseUrl = response.url();
         if (!responseUrl.startsWith(VIEWCRATE_ORIGIN)) return;
         const path = new URL(responseUrl).pathname;
+        if (response.request().resourceType() === "script") {
+          logger.log(
+            `Viewcrate script response | status=${response.status()} | contentType=${response.headers()["content-type"] || "unknown"} | url=${safeUrl(responseUrl)}`,
+          );
+        }
         if (!/api|unlock|protect|password|resolve/i.test(path) && !path.includes("/c/")) return;
         logger.log(
           `Viewcrate network response | status=${response.status()} | type=${response.request().resourceType()} | contentType=${response.headers()["content-type"] || "unknown"} | url=${safeUrl(responseUrl)}`,
@@ -168,11 +178,26 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
           });
         }
       };
+      const onViewcrateRequestFailed = (request: HTTPRequest) => {
+        if (!request.url().startsWith(VIEWCRATE_ORIGIN)) return;
+        logger.warn(
+          `Viewcrate request failed | type=${request.resourceType()} | url=${safeUrl(request.url())} | reason=${request.failure()?.errorText || "unknown"}`,
+        );
+      };
+      const onViewcratePageError = (error: Error) => {
+        logger.warn(
+          `Viewcrate page JavaScript error | name=${error.name} | message=${error.message.slice(0, 200)}`,
+        );
+      };
       page.on("request", onViewcrateRequest);
       page.on("response", onViewcrateResponse);
+      page.on("requestfailed", onViewcrateRequestFailed);
+      page.on("pageerror", onViewcratePageError);
       removeNetworkDiagnostics = () => {
         page.off("request", onViewcrateRequest);
         page.off("response", onViewcrateResponse);
+        page.off("requestfailed", onViewcrateRequestFailed);
+        page.off("pageerror", onViewcratePageError);
       };
 
       // Viewcrate renders its protected-content placeholder when its page context
