@@ -68,6 +68,7 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
     let removeNetworkDiagnostics: (() => void) | undefined;
     let removeVisibilityOverride: (() => Promise<void>) | undefined;
     const responseDiagnosticTasks: Promise<void>[] = [];
+    const requestStartedAt = new WeakMap<HTTPRequest, number>();
 
     try {
       const safeUrl = (rawUrl: string) => {
@@ -90,6 +91,7 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
       const safeConsoleText = (value: string) => value.replace(/https?:\/\/\S+/gi, "[url]").replace(/[A-Za-z0-9_+/-]{40,}={0,2}/g, "[redacted]").slice(0, 200);
       const onViewcrateRequest = (request: HTTPRequest) => {
         const requestUrl = request.url();
+        if (requestUrl.includes("/bootstrap")) requestStartedAt.set(request, Date.now());
         if (request.resourceType() === "script") {
           logger.log(
             `Viewcrate script request | method=${request.method()} | url=${safeUrl(requestUrl)}`,
@@ -160,6 +162,7 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
                   ? Object.fromEntries(Object.entries(payload).map(([key, value]) => [key, describe(value)]))
                   : describe(payload);
                 const fingerprints: Record<string, { length: number; sha256: string }> = {};
+                const arrayItems: unknown[] = [];
                 if (payload && typeof payload === "object" && !Array.isArray(payload)) {
                   for (const key of ["k", "i", "c"]) {
                     const value = (payload as Record<string, unknown>)[key];
@@ -167,9 +170,28 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
                       fingerprints[key] = { length: value.length, sha256: hashValue(value) };
                     }
                   }
+                  const entries = (payload as Record<string, unknown>).r;
+                  if (Array.isArray(entries)) arrayItems.push(...entries);
                 }
+                const rDiagnostics = arrayItems.map((value) => {
+                  if (typeof value === "string") {
+                    return { type: "string", length: value.length, sha256: hashValue(value) };
+                  }
+                  if (value && typeof value === "object") {
+                    const serialized = JSON.stringify(value);
+                    return {
+                      type: Array.isArray(value) ? "array" : "object",
+                      keys: Array.isArray(value) ? undefined : Object.keys(value as object).sort(),
+                      length: serialized.length,
+                      sha256: hashValue(serialized),
+                    };
+                  }
+                  return { type: value === null ? "null" : typeof value };
+                });
+                const requestStarted = requestStartedAt.get(response.request());
+                const durationMs = requestStarted === undefined ? "unknown" : Date.now() - requestStarted;
                 logger.log(
-                  `Viewcrate bootstrap structure | status=${response.status()} | bytes=${Buffer.byteLength(body)} | parsedJson=${Boolean(payload)} | structure=${JSON.stringify(fields)} | fingerprints=${JSON.stringify(fingerprints)}`,
+                  `Viewcrate bootstrap structure | status=${response.status()} | durationMs=${durationMs} | bytes=${Buffer.byteLength(body)} | parsedJson=${Boolean(payload)} | structure=${JSON.stringify(fields)} | fingerprints=${JSON.stringify(fingerprints)} | rItems=${JSON.stringify(rDiagnostics)}`,
                 );
               }
             } catch (error) {
@@ -179,7 +201,6 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
         }
       };
       const onViewcrateRequestFailed = (request: HTTPRequest) => {
-        if (!request.url().startsWith(VIEWCRATE_ORIGIN)) return;
         logger.warn(
           `Viewcrate request failed | type=${request.resourceType()} | url=${safeUrl(request.url())} | reason=${request.failure()?.errorText || "unknown"}`,
         );
@@ -187,7 +208,9 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
       const onViewcrateConsole = (message: ConsoleMessage) => {
         const type = message.type();
         if (type !== "error" && type !== "warn") return;
-        logger.warn(`Viewcrate page console | type=${type} | text=${safeConsoleText(message.text())}`);
+        const location = message.location();
+        const source = location.url ? safeUrl(location.url) : "unknown";
+        logger.warn(`Viewcrate page console | type=${type} | source=${source} | line=${location.lineNumber ?? "unknown"} | text=${safeConsoleText(message.text())}`);
       };
       const onViewcratePageError = (error: unknown) => {
         const message =
