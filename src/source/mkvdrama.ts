@@ -199,12 +199,32 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
       const episode = content.episode ?? 1;
       const configKey = `${config.tbKey}:${config.mfpUrl}:${config.mfpPass}`;
       const streamKey = `streams:${type}:${configKey}:${this.name}:${id}:${season}:${episode}`;
-      const cacheStreams: Stream[] = cache.get(streamKey);
-      if (cacheStreams) return cacheStreams;
       if (!mkvdramaId) {
         mkvdramaId = (await this.getSearch(title, year, season))?.mkvdramaId;
       }
       if (!mkvdramaId) return [];
+
+      const providerContentId = `${this.name}:${mkvdramaId}`;
+      getOrCreateOuoVerification(providerContentId);
+      const getCaptchaItem = (): Stream[] => {
+        const verification = getOuoVerificationForContent(providerContentId);
+        if (verification?.status !== "awaiting_verification") return [];
+        const url = verification.ouoUrl
+          ? `so7o://focus?url=${encodeURIComponent(verification.ouoUrl)}`
+          : "so7o://focus";
+        return [{
+          name: "🔐 MKVDrama CAPTCHA",
+          description: "Manual CAPTCHA required — open SO7O",
+          externalUrl: url,
+          behaviorHints: {
+            notWebReady: true,
+            filename: "MKVDrama-OUO-Verification",
+          },
+        }];
+      };
+
+      const cacheStreams: Stream[] = cache.get(streamKey);
+      if (cacheStreams) return [...getCaptchaItem(), ...cacheStreams];
       const dbStreams = await StreamService.getDbStreams(
         `${this.name}:${mkvdramaId}`,
         // season ?? 1,
@@ -215,7 +235,7 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
       );
       if (dbStreams.length > 0) {
         cache.set(streamKey, dbStreams, TTL_MS.stream);
-        return dbStreams;
+        return [...getCaptchaItem(), ...dbStreams];
       }
 
       // Add job
@@ -251,23 +271,7 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
         });
         description = `${total + 1} in queue\nWait about ${wait + 1} minutes`;
       }
-      const providerContentId = `${this.name}:${mkvdramaId}`;
-      getOrCreateOuoVerification(providerContentId);
-      const verification = getOuoVerificationForContent(providerContentId);
-      const streams: Stream[] = [];
-      // Nuvio only receives this item after OUO explicitly asks for a human
-      // click. The custom URI foregrounds SO7O's existing WebView session.
-      if (verification?.status === "awaiting_verification") {
-        streams.push({
-          name: "🔐 MKVDrama CAPTCHA",
-          description: "Manual CAPTCHA required — open SO7O",
-          externalUrl: "so7o://focus",
-          behaviorHints: {
-            notWebReady: true,
-            filename: "MKVDrama-OUO-Verification",
-          },
-        });
-      }
+      const streams: Stream[] = getCaptchaItem();
       streams.push({
         name: this.displayName,
         description: description,
