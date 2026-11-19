@@ -210,7 +210,6 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
       if (!mkvdramaId) return [];
 
       const providerContentId = `${this.name}:${mkvdramaId}`;
-      getOrCreateOuoVerification(providerContentId);
 
       if (forceRefresh) {
         this.logger.warn(
@@ -228,17 +227,26 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
       }
       const getCaptchaItem = (): Stream[] => {
         const verification = getOuoVerificationForContent(providerContentId);
-        if (verification?.status !== "awaiting_verification") return [];
+        if (!verification) return [];
+        const awaitingVerification =
+          verification.status === "awaiting_verification" ||
+          verification.status === "open_requested";
         const url = verification.ouoUrl
           ? `so7o://focus?url=${encodeURIComponent(verification.ouoUrl)}`
           : "so7o://focus";
         return [{
-          name: "🔐 MKVDrama CAPTCHA",
-          description: "Manual CAPTCHA required — open SO7O",
+          name: awaitingVerification
+            ? "🔐 MKVDrama CAPTCHA"
+            : "⏳ Open SO7O",
+          description: awaitingVerification
+            ? "Manual CAPTCHA required — complete it in SO7O"
+            : "MKVDrama is preparing streams — keep SO7O open",
           externalUrl: url,
           behaviorHints: {
             notWebReady: true,
-            filename: "MKVDrama-OUO-Verification",
+            filename: awaitingVerification
+              ? "MKVDrama-OUO-Verification"
+              : "MKVDrama-Pending-SO7O",
           },
         }];
       };
@@ -257,6 +265,10 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
         cache.set(streamKey, dbStreams, TTL_MS.stream);
         return [...getCaptchaItem(), ...dbStreams];
       }
+
+      // Create the SO7O handoff as soon as the first stream request queues
+      // the job, before the OUO page has finished loading.
+      getOrCreateOuoVerification(providerContentId);
 
       // Add job
       const jobId = `job:streams:${this.name}:${mkvdramaId}`;
@@ -725,9 +737,18 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
           links.push({ link: null, quality: selectedLink.quality });
         }
       }
+      // Link 1 and Link 2 can lead to the same OUO short URL. Resolve each
+      // unique destination only once so the same CAPTCHA is not submitted twice.
+      const uniqueLinks = [
+        ...new Map(
+          links
+            .filter((link): link is { link: string; quality: string } => Boolean(link.link))
+            .map((link) => [getOuoId(link.link!) || link.link!, link]),
+        ).values(),
+      ];
       // Resolve OUO mirrors sequentially because both use the same SO7O tab.
       const redirects: (EOuoInsert & { quality: Quality })[] = [];
-      for (const link of links) {
+      for (const link of uniqueLinks) {
         const originalUrl = link.link;
         if (!originalUrl) continue;
         let redirectedUrl: string | undefined;
