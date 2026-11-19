@@ -99,12 +99,34 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
         const responseUrl = response.url();
         if (!responseUrl.startsWith(VIEWCRATE_ORIGIN)) return;
         const path = new URL(responseUrl).pathname;
-        if (!/api|unlock|protect|password|resolve|\/c\//i.test(path)) return;
+        if (!/api|unlock|protect|password|resolve|\\/c\\//i.test(path)) return;
         logger.log(
           `Viewcrate network response | status=${response.status()} | type=${response.request().resourceType()} | contentType=${response.headers()["content-type"] || "unknown"} | url=${safeUrl(responseUrl)}`,
         );
+
+        // Summarize bootstrap structure only; never log response values or secrets.
+        if (/\\/bootstrap\\/?$/i.test(path)) {
+          void response.json().then((payload) => {
+            const summarize = (value, depth = 0) => {
+              if (Array.isArray(value)) return { type: "array", length: value.length };
+              if (!value || typeof value !== "object") return typeof value;
+              if (depth >= 2) return { type: "object", keys: Object.keys(value).slice(0, 30) };
+              const summary = {};
+              for (const [key, child] of Object.entries(value).slice(0, 30)) {
+                if (typeof child === "boolean" && /protect|lock|error|success|password|valid/i.test(key)) summary[key] = child;
+                else if (Array.isArray(child)) summary[key] = { type: "array", length: child.length };
+                else if (child && typeof child === "object") summary[key] = summarize(child, depth + 1);
+                else summary[key] = typeof child;
+              }
+              return summary;
+            };
+            logger.log("Viewcrate bootstrap diagnostic | shape=" + JSON.stringify(summarize(payload)));
+          }).catch((error) => {
+            logger.warn("Viewcrate bootstrap diagnostic unavailable | reason=" + String(error).slice(0, 120));
+          });
+        }
       };
-      page.on("request", onViewcrateRequest);
+            page.on("request", onViewcrateRequest);
       page.on("response", onViewcrateResponse);
       removeNetworkDiagnostics = () => {
         page.off("request", onViewcrateRequest);
@@ -188,6 +210,22 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
         })
         .catch(() => null);
 
+      const pageRuntimeState = await page.evaluate(() => {
+        const section = document.querySelector("main > div:nth-child(3)[data-resolve-url]");
+        const bootstrapResource = performance
+          .getEntriesByType("resource")
+          .filter((entry) => entry.name.includes("/bootstrap"))
+          .map((entry) => ({ durationMs: Math.round(entry.duration), responseEndMs: Math.round(entry.responseEnd), transferSize: entry.transferSize || 0 }));
+        return {
+          visibilityState: document.visibilityState,
+          hidden: document.hidden,
+          focused: document.hasFocus(),
+          readyState: document.readyState,
+          sectionChildCount: section?.children.length ?? 0,
+          downloadHandlerBound: section?.getAttribute("data-download-handler-bound") === "true",
+          bootstrapResource,
+        };
+      }).catch(() => ({ visibilityState: "unavailable", hidden: null, focused: null, readyState: "unavailable", sectionChildCount: -1, downloadHandlerBound: false, bootstrapResource: [] }));
       const html = await page.content();
       const status = navigationResponse?.status() ?? 0;
       const $ = cheerio.load(html);
@@ -254,7 +292,7 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
       }
 
       logger.log(
-        `Viewcrate browser page ready | status=${status} | bytes=${Buffer.byteLength(html)} | episodeHosters=${sectionHosters} | documentHosters=${documentHosters} | protectedText=${pageText.toLowerCase().includes("protected content")} | passwordProvided=${Boolean(password)} | forms=${formSummary.length} | sectionPreview=${sectionPreview} | sectionChildren=${JSON.stringify(sectionChildren)} | sectionAttributes=${JSON.stringify(sectionAttributes)}`,
+        `Viewcrate browser page ready | status=${status} | bytes=${Buffer.byteLength(html)} | episodeHosters=${sectionHosters} | documentHosters=${documentHosters} | protectedText=${pageText.toLowerCase().includes("protected content")} | passwordProvided=${Boolean(password)} | forms=${formSummary.length} | sectionPreview=${sectionPreview} | sectionChildren=${JSON.stringify(sectionChildren)} | sectionAttributes=${JSON.stringify(sectionAttributes)} | pageRuntimeState=${JSON.stringify(pageRuntimeState)}`,
       );
       logger.log(
         `Viewcrate unlock diagnostics | page=${safeUrl(page.url())} | forms=${JSON.stringify(formSummary)} | scripts=${JSON.stringify(scriptDiagnostics)}`,
