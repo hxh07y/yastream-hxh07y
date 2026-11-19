@@ -252,20 +252,8 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
         description = `${total + 1} in queue\nWait about ${wait + 1} minutes`;
       }
       const verification = getOrCreateOuoVerification(`${this.name}:${mkvdramaId}`);
-      const streams: Stream[] = [];
-      const activeVerification = getOuoVerificationForContent(`${this.name}:${mkvdramaId}`);
-      if (activeVerification) {
-        streams.push({
-          name: "🔐 MKVDrama CAPTCHA",
-          description: "Open this item to access the OUO verification page",
-          externalUrl: activeVerification.pageUrl,
-          behaviorHints: {
-            notWebReady: true,
-            filename: "MKVDrama-OUO-Verification",
-          },
-        });
-      } else {
-        streams.push({
+      const streams: Stream[] = [
+        {
           name: "🔐 MKVDrama CAPTCHA",
           description: "Open this item to access the OUO verification page",
           externalUrl: verification.pageUrl,
@@ -273,8 +261,8 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
             notWebReady: true,
             filename: "MKVDrama-OUO-Verification",
           },
-        });
-      }
+        },
+      ];
       streams.push({
         name: this.displayName,
         description: description,
