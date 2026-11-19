@@ -31,7 +31,7 @@ export async function getUrlsFromViewcrateDlc(url: string, password?: string) {
   logger.log(`GET viewcrate dlc | ${url}`);
   // need to load js to have episodes
   // const html = await axiosGet<string>(url);
-  const html = await getViewcrateHtml(url);
+  const html = await getViewcrateHtml(url, password);
   if (!html) throw new ViewcrateError("No html");
   if (html.toLowerCase().includes("protected content")) {
     throw new ViewcrateError("Protected content");
@@ -46,7 +46,7 @@ export async function getUrlsFromViewcrateDlc(url: string, password?: string) {
   return { urls, episodes };
 }
 
-async function getViewcrateHtml(url: string): Promise<string> {
+async function getViewcrateHtml(url: string, password?: string): Promise<string> {
   if (!ENV.PUPPETEER_CDP_HTTP_URL) {
     const response = await getFlareSolverr(url, "viewcrate", 2);
     return response?.solution?.response || "";
@@ -67,6 +67,67 @@ async function getViewcrateHtml(url: string): Promise<string> {
         waitUntil: "domcontentloaded",
         timeout: 60000,
       });
+
+      // Submit the saved Viewcrate password through the site's own form so
+      // the browser retains the required cookies and session state.
+      if (password) {
+        const formState = await page.evaluate(() => {
+          const forms = Array.from(document.forms);
+          const form = forms.find((candidate) =>
+            Boolean(
+              candidate.querySelector(
+                'input[type="password"], input[name*="password" i], input[id*="password" i]',
+              ),
+            ),
+          );
+          const input = form?.querySelector<HTMLInputElement>(
+            'input[type="password"], input[name*="password" i], input[id*="password" i]',
+          );
+          return {
+            hasPasswordForm: Boolean(form && input),
+            formAction: form?.action || "",
+            inputName: input?.name || "",
+          };
+        });
+
+        if (formState.hasPasswordForm) {
+          logger.log(
+            `Viewcrate protected form detected | action=${formState.formAction || "same-page"} | passwordField=${formState.inputName || "unnamed"}`,
+          );
+          const navigation = page
+            .waitForNavigation({ waitUntil: "domcontentloaded", timeout: 15000 })
+            .catch(() => null);
+          const submitted = await page.evaluate((secret) => {
+            const forms = Array.from(document.forms);
+            const form = forms.find((candidate) =>
+              Boolean(
+                candidate.querySelector(
+                  'input[type="password"], input[name*="password" i], input[id*="password" i]',
+                ),
+              ),
+            );
+            const input = form?.querySelector<HTMLInputElement>(
+              'input[type="password"], input[name*="password" i], input[id*="password" i]',
+            );
+            if (!form || !input) return false;
+            input.value = secret;
+            input.dispatchEvent(new Event("input", { bubbles: true }));
+            input.dispatchEvent(new Event("change", { bubbles: true }));
+            form.requestSubmit();
+            return true;
+          }, password);
+          if (submitted) {
+            await navigation;
+            await page.waitForSelector(
+              "main > div:nth-child(3)[data-resolve-url]",
+              { timeout: 20000 },
+            ).catch(() => null);
+          }
+        } else {
+          logger.warn("Viewcrate page did not expose a password form despite a stored password");
+        }
+      }
+
       await page
         .waitForSelector("main > div:nth-child(3)[data-resolve-url]", {
           timeout: 25000,
@@ -82,17 +143,29 @@ async function getViewcrateHtml(url: string): Promise<string> {
       const html = await page.content();
       const status = navigationResponse?.status() ?? 0;
       const $ = cheerio.load(html);
-      const hasDlcSection = Boolean(
-        $("main > div").eq(2).attr("data-resolve-url"),
-      );
+      const $dlcSection = $("main > div").eq(2);
+      const hasDlcSection = Boolean($dlcSection.attr("data-resolve-url"));
+      const sectionHosters = $dlcSection.find("div[class^='y_']").length;
+      const documentHosters = $("div[class^='y_']").length;
+      const pageText = $("body").text().replace(/\\s+/g, " ").trim();
+      const formSummary = $("form").map((_, form) => ({
+        action: $(form).attr("action") || "",
+        fields: $(form).find("input").map((__, input) => ({
+          name: $(input).attr("name") || "",
+          type: $(input).attr("type") || "text",
+        })).get(),
+      })).get();
       if (status >= 400 || !hasDlcSection) {
+        logger.warn(
+          `Viewcrate DOM diagnostic | url=${page.url()} | body=${pageText.slice(0, 450)} | forms=${JSON.stringify(formSummary)} | mainDivs=${$("main > div").length}`,
+        );
         throw new ViewcrateError(
           `Viewcrate page did not render in SO7O | status=${status} | title=${$("title").text().trim()}`,
         );
       }
 
       logger.log(
-        `Viewcrate browser page ready | status=${status} | bytes=${Buffer.byteLength(html)} | episodeHosters=${$("main > div").eq(2).find("div[class^='y_']").length}`,
+        `Viewcrate browser page ready | status=${status} | bytes=${Buffer.byteLength(html)} | episodeHosters=${sectionHosters} | documentHosters=${documentHosters} | protectedText=${pageText.toLowerCase().includes("protected content")} | forms=${formSummary.length}`,
       );
       return html;
     } finally {
