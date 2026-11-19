@@ -515,6 +515,7 @@ export async function buildStreamHandler(
   logger.log(`Stream | ${args.id}${forceRefresh ? " | force refresh" : ""}`);
   try {
     const streamKey = `streams:${args.type}:${args.id}:${JSON.stringify(config.stream)}:${config.info}:${config.tbKey}:${config.mfpUrl}:${config.mfpPass}`;
+    if (forceRefresh) cache.delete(streamKey);
     const cacheStreams = forceRefresh ? null : cache.get(streamKey);
     if (cacheStreams) return cacheStreams;
     const content = await getContent(args);
