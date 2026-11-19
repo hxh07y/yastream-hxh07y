@@ -215,7 +215,14 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
         const bootstrapResource = performance
           .getEntriesByType("resource")
           .filter((entry) => entry.name.includes("/bootstrap"))
-          .map((entry) => ({ durationMs: Math.round(entry.duration), responseEndMs: Math.round(entry.responseEnd), transferSize: entry.transferSize || 0 }));
+          .map((entry) => {
+            const resource = entry as PerformanceResourceTiming;
+            return {
+              durationMs: Math.round(resource.duration),
+              responseEndMs: Math.round(resource.responseEnd),
+              transferSize: resource.transferSize || 0,
+            };
+          });
         return {
           visibilityState: document.visibilityState,
           hidden: document.hidden,
