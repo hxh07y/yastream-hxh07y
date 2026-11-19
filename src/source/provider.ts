@@ -64,6 +64,7 @@ export abstract class BaseProvider {
     content: ContentDetail,
     config: UserConfig,
     forceRefresh?: boolean,
+    bypassCache?: boolean,
   ): Promise<Stream[]>;
 
   abstract getSubtitles(content: ContentDetail): Promise<Subtitle[]>;
