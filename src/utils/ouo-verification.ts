@@ -14,6 +14,7 @@ interface OuoVerification {
   status: VerificationStatus;
   openRequested: boolean;
   expiresAt: number;
+  ouoUrl?: string;
 }
 
 const verifications = new Map<string, OuoVerification>();
@@ -71,15 +72,19 @@ export function getOuoVerificationForContent(providerContentId: string) {
     id,
     pageUrl: new URL(`/verify/${id}`, getOrigin()).toString(),
     status: verification.status,
+    ouoUrl: verification.ouoUrl,
   };
 }
 
-export function markOuoVerificationRequired(providerContentId: string) {
+export function markOuoVerificationRequired(providerContentId: string, ouoUrl?: string) {
   const active = getOuoVerificationForContent(providerContentId);
   if (!active) return;
   const verification = getActive(active.id);
-  if (verification && verification.status !== "open_requested") {
-    verification.status = "awaiting_verification";
+  if (verification) {
+    if (ouoUrl) verification.ouoUrl = ouoUrl;
+    if (verification.status !== "open_requested") {
+      verification.status = "awaiting_verification";
+    }
   }
 }
 
