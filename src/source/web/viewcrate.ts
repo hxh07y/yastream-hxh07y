@@ -59,6 +59,7 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
 
   return withCdpPageLock("Viewcrate DLC extraction", async () => {
     const browser = await getBrowser();
+    let removeNetworkDiagnostics: (() => void) | undefined;
     try {
       const pages = await browser.pages();
       // SO7O exposes its existing WebView rather than allowing new targets.
@@ -104,6 +105,10 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
       };
       page.on("request", onViewcrateRequest);
       page.on("response", onViewcrateResponse);
+      removeNetworkDiagnostics = () => {
+        page.off("request", onViewcrateRequest);
+        page.off("response", onViewcrateResponse);
+      };
 
       let navigationResponse = await page.goto(url, {
         waitUntil: "domcontentloaded",
@@ -255,8 +260,7 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
       );
       return html;
     } finally {
-      page.off("request", onViewcrateRequest);
-      page.off("response", onViewcrateResponse);
+      removeNetworkDiagnostics?.();
       // The WebView belongs to SO7O; disconnect without closing its page.
       await browser.disconnect();
     }
