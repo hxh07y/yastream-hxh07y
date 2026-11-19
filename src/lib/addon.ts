@@ -510,11 +510,12 @@ export async function buildMetaHandler(
 export async function buildStreamHandler(
   args: StreamHandlerArgs,
   config: UserConfig = defaultConfig,
+  forceRefresh = false,
 ): Promise<{ streams: Stream[] } & Cache> {
-  logger.log(`Stream | ${args.id}`);
+  logger.log(`Stream | ${args.id}${forceRefresh ? " | force refresh" : ""}`);
   try {
     const streamKey = `streams:${args.type}:${args.id}:${JSON.stringify(config.stream)}:${config.info}:${config.tbKey}:${config.mfpUrl}:${config.mfpPass}`;
-    const cacheStreams = cache.get(streamKey);
+    const cacheStreams = forceRefresh ? null : cache.get(streamKey);
     if (cacheStreams) return cacheStreams;
     const content = await getContent(args);
     if (!content) {
@@ -529,7 +530,11 @@ export async function buildStreamHandler(
     const streams = (
       await Promise.all(
         filteredProviders.map(async (provider) => {
-          return await provider.getStreams(content, config);
+          return await provider.getStreams(
+            content,
+            config,
+            forceRefresh && provider.name === Provider.MKVDRAMA,
+          );
         }),
       )
     ).flat();
@@ -537,7 +542,7 @@ export async function buildStreamHandler(
     const streamResults: { streams: Stream[] } & Cache = {
       streams: streams,
     };
-    if (streams.length > 0 && !notDone) {
+    if (streams.length > 0 && !notDone && !forceRefresh) {
       streamResults.cacheMaxAge = 1 * 60 * 60;
       cache.set(streamKey, streamResults, TTL_MS.stream);
     }
