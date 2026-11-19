@@ -1,5 +1,6 @@
 import * as cheerio from "cheerio";
 import * as crypto from "crypto";
+import type { HTTPRequest, HTTPResponse } from "puppeteer";
 import { axiosGet, axiosPost } from "../../utils/axios.js";
 import { getFlareSolverr } from "../../utils/browser/flaresolverr.js";
 import { getBrowser, withCdpPageLock } from "../../utils/browser/puppeteer.js";
@@ -85,7 +86,7 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
           return "[invalid-url]";
         }
       };
-      const onViewcrateRequest = (request: import("puppeteer-core").HTTPRequest) => {
+      const onViewcrateRequest = (request: HTTPRequest) => {
         const requestUrl = request.url();
         if (!requestUrl.startsWith(VIEWCRATE_ORIGIN)) return;
         const path = new URL(requestUrl).pathname;
@@ -94,7 +95,7 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
           `Viewcrate network request | method=${request.method()} | type=${request.resourceType()} | url=${safeUrl(requestUrl)}`,
         );
       };
-      const onViewcrateResponse = (response: import("puppeteer-core").HTTPResponse) => {
+      const onViewcrateResponse = (response: HTTPResponse) => {
         const responseUrl = response.url();
         if (!responseUrl.startsWith(VIEWCRATE_ORIGIN)) return;
         const path = new URL(responseUrl).pathname;
