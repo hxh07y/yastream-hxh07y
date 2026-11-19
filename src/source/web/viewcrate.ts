@@ -62,6 +62,7 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
     const browser = await getBrowser();
     let removeNetworkDiagnostics: (() => void) | undefined;
     let removeVisibilityOverride: (() => Promise<void>) | undefined;
+    let removeRenderDiagnostics: (() => Promise<unknown>) | undefined;
     try {
       const pages = await browser.pages();
       // SO7O exposes its existing WebView rather than allowing new targets.
@@ -70,6 +71,21 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
       if (!page) {
         throw new ViewcrateError("SO7O does not expose an existing WebView page");
       }
+      removeRenderDiagnostics = () => page.evaluate(() => {
+        const diag = (window as typeof window & {
+          __viewcrateRenderDiag?: {
+            rootObserver?: MutationObserver;
+            sectionObserver?: MutationObserver;
+            restorers: Array<() => void>;
+          };
+        }).__viewcrateRenderDiag;
+        diag?.rootObserver?.disconnect();
+        diag?.sectionObserver?.disconnect();
+        for (const restore of diag?.restorers || []) {
+          try { restore(); } catch { /* best-effort restoration */ }
+        }
+        delete (window as typeof window & { __viewcrateRenderDiag?: unknown }).__viewcrateRenderDiag;
+      });
 
       const safeUrl = (rawUrl: string) => {
         try {
@@ -456,21 +472,7 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
     } finally {
       removeNetworkDiagnostics?.();
       try {
-        await page.evaluate(() => {
-          const diag = (window as typeof window & {
-            __viewcrateRenderDiag?: {
-              rootObserver?: MutationObserver;
-              sectionObserver?: MutationObserver;
-              restorers: Array<() => void>;
-            };
-          }).__viewcrateRenderDiag;
-          diag?.rootObserver?.disconnect();
-          diag?.sectionObserver?.disconnect();
-          for (const restore of diag?.restorers || []) {
-            try { restore(); } catch { /* best-effort restoration */ }
-          }
-          delete (window as typeof window & { __viewcrateRenderDiag?: unknown }).__viewcrateRenderDiag;
-        });
+        await removeRenderDiagnostics?.();
       } catch {
         // The page may have navigated or detached during cleanup.
       }
