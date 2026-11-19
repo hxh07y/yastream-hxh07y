@@ -14,9 +14,12 @@ const analytics = new Hono();
 const visitors = new Set<string>();
 
 export function extractHeaderInfo(c: Context) {
+  // Reverse proxies may append multiple addresses; use the originating client entry.
+  const forwardedFor = c.req.header("x-forwarded-for");
   const ip =
-    c.req.header("x-forwarded-for") ||
+    forwardedFor?.split(",")[0]?.trim() ||
     c.req.header("cf-connecting-ip") ||
+    c.req.header("x-real-ip") ||
     "unknown";
   const country = c.req.header("cf-ipcountry") || "";
   const url = c.req.url;
