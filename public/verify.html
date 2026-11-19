@@ -20,8 +20,8 @@
 <body>
   <main>
     <h1>Complete OUO verification</h1>
-    <p>YaStream is waiting for the Turnstile check in your SO7O browser session.</p>
-    <button id="open" type="button">Bring CAPTCHA forward in SO7O</button>
+    <p>This page is linked from the MKVDrama stream list in Nuvio. It will become ready when YaStream reaches the OUO Turnstile check.</p>
+    <button id="open" type="button" disabled>Open CAPTCHA in SO7O</button>
     <div id="status" role="status" aria-live="polite">Waiting for your action…</div>
     <p><small>After tapping the button, switch to SO7O and complete the CAPTCHA. YaStream will continue automatically once verification succeeds.</small></p>
   </main>
@@ -30,8 +30,10 @@
     const statusNode = document.getElementById("status");
     const openButton = document.getElementById("open");
     let finished = false;
+    let verificationReady = false;
 
     openButton.addEventListener("click", async () => {
+      if (!verificationReady) return;
       openButton.disabled = true;
       statusNode.textContent = "Asking SO7O to bring the verification page forward…";
       try {
@@ -56,7 +58,16 @@
           return;
         }
         const result = await response.json();
-        if (result.status === "completed") {
+        if (result.status === "awaiting_verification") {
+          verificationReady = true;
+          openButton.disabled = false;
+          statusNode.textContent = "OUO verification is ready. Tap the button, then switch to SO7O.";
+        } else if (result.status === "preparing" || result.status === "open_requested") {
+          openButton.disabled = true;
+          statusNode.textContent = result.status === "preparing"
+            ? "Waiting for YaStream to reach the OUO verification step…"
+            : "Request sent. Switch to SO7O and complete the CAPTCHA.";
+        } else if (result.status === "completed") {
           statusNode.textContent = "Verification completed. YaStream is continuing the stream resolution.";
           openButton.disabled = true;
           finished = true;
