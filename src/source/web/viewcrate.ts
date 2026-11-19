@@ -61,7 +61,7 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
   return withCdpPageLock("Viewcrate DLC extraction", async () => {
     const browser = await getBrowser();
     let removeNetworkDiagnostics: (() => void) | undefined;
-    let visibilityOverrideId: string | undefined;
+    let removeVisibilityOverride: (() => Promise<void>) | undefined;
     try {
       const pages = await browser.pages();
       // SO7O exposes its existing WebView rather than allowing new targets.
@@ -156,7 +156,8 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
           // Keep extraction running; runtime diagnostics will show actual state.
         }
       });
-      visibilityOverrideId = visibilityOverride.identifier;
+      removeVisibilityOverride = () =>
+        page.removeScriptToEvaluateOnNewDocument(visibilityOverride.identifier);
       logger.log("Viewcrate page-scoped visibility override installed");
 
       let navigationResponse = await page.goto(url, {
@@ -334,9 +335,9 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
       return html;
     } finally {
       removeNetworkDiagnostics?.();
-      if (visibilityOverrideId) {
+      if (removeVisibilityOverride) {
         try {
-          await page.removeScriptToEvaluateOnNewDocument(visibilityOverrideId);
+          await removeVisibilityOverride();
           logger.log("Viewcrate page-scoped visibility override removed");
         } catch (error) {
           logger.warn("Could not remove Viewcrate visibility override | reason=" + String(error).slice(0, 120));
