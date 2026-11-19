@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <title>YaStream CAPTCHA verification</title>
+  <style>
+    :root { color-scheme: dark; font-family: system-ui, sans-serif; background: #101318; color: #f3f4f6; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px; box-sizing: border-box; }
+    main { width: min(100%, 440px); box-sizing: border-box; padding: 26px; border: 1px solid #343b46; border-radius: 16px; background: #191e26; }
+    h1 { margin: 0 0 12px; font-size: 1.35rem; }
+    p { color: #c2c9d3; line-height: 1.55; }
+    button { width: 100%; border: 0; border-radius: 10px; padding: 14px 16px; margin: 12px 0; color: #fff; background: #2764d8; font-size: 1rem; font-weight: 650; }
+    button:disabled { opacity: .55; }
+    #status { margin-top: 12px; padding: 12px; border-radius: 9px; background: #252d38; color: #e5eaf1; }
+    small { color: #9da8b6; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Complete OUO verification</h1>
+    <p>YaStream is waiting for the Turnstile check in your SO7O browser session.</p>
+    <button id="open" type="button">Open CAPTCHA in SO7O</button>
+    <div id="status" role="status" aria-live="polite">Waiting for your action…</div>
+    <p><small>After tapping the button, switch to SO7O and complete the CAPTCHA. YaStream will continue automatically once verification succeeds.</small></p>
+  </main>
+  <script>
+    const challengeId = "{{CHALLENGE_ID}}";
+    const statusNode = document.getElementById("status");
+    const openButton = document.getElementById("open");
+    let finished = false;
+
+    openButton.addEventListener("click", async () => {
+      openButton.disabled = true;
+      statusNode.textContent = "Asking SO7O to bring the verification page forward…";
+      try {
+        const response = await fetch("/verify/" + challengeId + "/open", { method: "POST" });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.message || "Unable to contact YaStream");
+        statusNode.textContent = "Request sent. Switch to SO7O and complete the CAPTCHA.";
+      } catch (error) {
+        statusNode.textContent = error.message || "Request failed. Refresh this page and try again.";
+        openButton.disabled = false;
+      }
+    });
+
+    async function refreshStatus() {
+      if (finished) return;
+      try {
+        const response = await fetch("/verify/" + challengeId + "/status", { cache: "no-store" });
+        if (!response.ok) {
+          statusNode.textContent = "This verification session has expired. Retry playback in Nuvio.";
+          openButton.disabled = true;
+          finished = true;
+          return;
+        }
+        const result = await response.json();
+        if (result.status === "completed") {
+          statusNode.textContent = "Verification completed. YaStream is continuing the stream resolution.";
+          openButton.disabled = true;
+          finished = true;
+        } else if (result.status === "expired") {
+          statusNode.textContent = "This verification session has expired. Retry playback in Nuvio.";
+          openButton.disabled = true;
+          finished = true;
+        }
+      } catch {
+        statusNode.textContent = "Connection interrupted. This page will keep checking…";
+      }
+      if (!finished) window.setTimeout(refreshStatus, 1500);
+    }
+    refreshStatus();
+  </script>
+</body>
+</html>
