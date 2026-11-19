@@ -35,7 +35,7 @@ const logger = new Logger("SERVER");
 
 const stremio = new Hono();
 
-function isForceStreamRefreshRequest(c: {
+function getStreamRequestOptions(c: {
   req: {
     query: (name: string) => string | undefined;
     header: (name: string) => string | undefined;
@@ -46,13 +46,19 @@ function isForceStreamRefreshRequest(c: {
     c.req.query("forceRefresh") ||
     ""
   ).toLowerCase();
+  const forceProviderRefresh = ["1", "true", "yes"].includes(refresh);
   const cacheControl = (c.req.header("cache-control") || "").toLowerCase();
   const pragma = (c.req.header("pragma") || "").toLowerCase();
-  return (
-    ["1", "true", "yes"].includes(refresh) ||
-    cacheControl.includes("no-cache") ||
-    pragma.includes("no-cache")
-  );
+  return {
+    // Nuvio's ordinary refresh button sends no-cache. It should fetch newly
+    // persisted streams, not delete them and restart the MKVDrama scraper.
+    bypassCache:
+      forceProviderRefresh ||
+      cacheControl.includes("no-cache") ||
+      pragma.includes("no-cache"),
+    // Only the explicit YaStream refresh query should rebuild provider links.
+    forceProviderRefresh,
+  };
 }
 
 export function getDescription(remaining: number) {
@@ -227,7 +233,7 @@ stremioRouteConfigs.forEach((config) => {
       return await buildStreamHandler(
         args,
         undefined,
-        isForceStreamRefreshRequest(c),
+        getStreamRequestOptions(c),
       );
     });
     builder.defineSubtitlesHandler(async (args) => {
@@ -293,7 +299,7 @@ configStremioRoutes.forEach((route) => {
         return await buildStreamHandler(
           args,
           config,
-          isForceStreamRefreshRequest(c),
+          getStreamRequestOptions(c),
         );
       });
     }
