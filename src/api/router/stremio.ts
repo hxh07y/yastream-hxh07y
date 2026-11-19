@@ -29,6 +29,7 @@ import { getOrigin } from "../../utils/domain.js";
 import { ENV } from "../../utils/env.js";
 import { Logger } from "../../utils/logger.js";
 import { extractHeaderInfo, getRemainingText } from "./analytics.js";
+import { INTERNAL_REQUEST_TOKEN } from "../../utils/internal.js";
 
 const logger = new Logger("SERVER");
 
@@ -57,9 +58,12 @@ const getLimiter = (
     return rateLimiter({
       windowMs: windowMs,
       limit: limit,
+      // Cache-warming requests are internal and must not consume a public client's quota.
+      skip: (c) =>
+        c.req.header("x-yastream-internal-token") === INTERNAL_REQUEST_TOKEN,
       keyGenerator: (c) => {
-        const { ip } = extractHeaderInfo(c);
-        const key = `${ip}`;
+        const { ip, userAgent } = extractHeaderInfo(c);
+        const key = `${ip}:${userAgent}`;
         return key;
       },
       handler: (c) => {
