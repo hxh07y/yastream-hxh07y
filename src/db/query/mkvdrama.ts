@@ -1,3 +1,4 @@
+import { eq } from "drizzle-orm";
 import { handleError } from "../../utils/error.js";
 import { Logger } from "../../utils/logger.js";
 import { db } from "../drizzle.js";
@@ -29,4 +30,9 @@ export function getMkvdrama(providerContentId: string) {
     },
   });
   return row;
+}
+
+export async function deleteMkvdramaByProviderContentId(providerContentId: string) {
+  if (!db) return;
+  await db.delete(mkvdrama).where(eq(mkvdrama.providerContentId, providerContentId));
 }
