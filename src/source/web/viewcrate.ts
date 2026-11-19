@@ -2,6 +2,8 @@ import * as cheerio from "cheerio";
 import * as crypto from "crypto";
 import { axiosGet, axiosPost } from "../../utils/axios.js";
 import { getFlareSolverr } from "../../utils/browser/flaresolverr.js";
+import { getBrowser, withCdpPageLock } from "../../utils/browser/puppeteer.js";
+import { ENV } from "../../utils/env.js";
 import { VIEWCRATE_ORIGIN } from "../../utils/constant.js";
 import { ViewcrateError } from "../../utils/error.js";
 import { Logger } from "../../utils/logger.js";
@@ -29,8 +31,7 @@ export async function getUrlsFromViewcrateDlc(url: string, password?: string) {
   logger.log(`GET viewcrate dlc | ${url}`);
   // need to load js to have episodes
   // const html = await axiosGet<string>(url);
-  const response = await getFlareSolverr(url, "viewcrate", 2);
-  const html = response?.solution?.response;
+  const html = await getViewcrateHtml(url);
   if (!html) throw new ViewcrateError("No html");
   if (html.toLowerCase().includes("protected content")) {
     throw new ViewcrateError("Protected content");
@@ -43,6 +44,62 @@ export async function getUrlsFromViewcrateDlc(url: string, password?: string) {
   const urls = await getUrlsFromDecryptit(dlc);
   const episodes = getEpisodeHosters(html);
   return { urls, episodes };
+}
+
+async function getViewcrateHtml(url: string): Promise<string> {
+  if (!ENV.PUPPETEER_CDP_HTTP_URL) {
+    const response = await getFlareSolverr(url, "viewcrate", 2);
+    return response?.solution?.response || "";
+  }
+
+  return withCdpPageLock("Viewcrate DLC extraction", async () => {
+    const browser = await getBrowser();
+    try {
+      const pages = await browser.pages();
+      // SO7O exposes its existing WebView rather than allowing new targets.
+      // Reuse it even when the current page is not already on Viewcrate.
+      const page = pages.find((candidate) => candidate.url() !== "about:blank") || pages[0];
+      if (!page) {
+        throw new ViewcrateError("SO7O does not expose an existing WebView page");
+      }
+
+      const navigationResponse = await page.goto(url, {
+        waitUntil: "domcontentloaded",
+        timeout: 60000,
+      });
+      await page
+        .waitForSelector("main > div:nth-child(3)[data-resolve-url]", {
+          timeout: 25000,
+        })
+        .catch(() => null);
+      // Viewcrate renders episode hosters with JavaScript after the base DOM.
+      await page
+        .waitForSelector("main > div:nth-child(3) div[class^='y_']", {
+          timeout: 15000,
+        })
+        .catch(() => null);
+
+      const html = await page.content();
+      const status = navigationResponse?.status() ?? 0;
+      const $ = cheerio.load(html);
+      const hasDlcSection = Boolean(
+        $("main > div").eq(2).attr("data-resolve-url"),
+      );
+      if (status >= 400 || !hasDlcSection) {
+        throw new ViewcrateError(
+          `Viewcrate page did not render in SO7O | status=${status} | title=${$("title").text().trim()}`,
+        );
+      }
+
+      logger.log(
+        `Viewcrate browser page ready | status=${status} | bytes=${Buffer.byteLength(html)} | episodeHosters=${$("main > div").eq(2).find("div[class^='y_']").length}`,
+      );
+      return html;
+    } finally {
+      // The WebView belongs to SO7O; disconnect without closing its page.
+      await browser.disconnect();
+    }
+  });
 }
 
 export async function getDlcUrl(html: string): Promise<string | undefined> {
