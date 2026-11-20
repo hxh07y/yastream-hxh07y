@@ -739,7 +739,7 @@ export function getEpisodeHosters(html: string): EpisodeHoster[] {
   $section.children().each((_, episode) => {
     const $episode = $(episode);
     const episodeTitle = $episode.find("h2").first().text().trim();
-    const episodeMatch = episodeTitle.match(/S\\d+E(\\d+)/i);
+    const episodeMatch = episodeTitle.match(/S\d+E(\d+)/i);
     if (!episodeMatch) return;
 
     const data: { hoster: Hoster; size: string }[] = [];
@@ -754,23 +754,23 @@ export function getEpisodeHosters(html: string): EpisodeHoster[] {
 
       const hosterLabel = spanTexts.find((label) => {
         if (!label) return false;
-        const hosterUrl = /^https?:\\/\\//i.test(label)
+        const hosterUrl = /^https?:\/\//i.test(label)
           ? label
           : `https://${label}`;
         return Boolean(getHosterFromUrl(hosterUrl));
       });
       if (!hosterLabel) return;
 
-      const hosterUrl = /^https?:\\/\\//i.test(hosterLabel)
+      const hosterUrl = /^https?:\/\//i.test(hosterLabel)
         ? hosterLabel
         : `https://${hosterLabel}`;
       const hoster = getHosterFromUrl(hosterUrl);
       if (!hoster) return;
 
       const sizeText = spanTexts.find((value) =>
-        /\\d+(?:\\.\\d+)?\\s*(?:GB|MB)\\b/i.test(value),
+        /\d+(?:\.\d+)?\s*(?:GB|MB)\b/i.test(value),
       ) || "";
-      const sizeMatch = sizeText.match(/(\\d+(?:\\.\\d+)?)\\s*(GB|MB)\\b/i);
+      const sizeMatch = sizeText.match(/(\d+(?:\.\d+)?)\s*(GB|MB)\b/i);
       let size = "";
       if (sizeMatch) {
         size = sizeMatch[2].toUpperCase() === "MB"
