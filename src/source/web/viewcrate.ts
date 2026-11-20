@@ -477,6 +477,35 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
         const className = $(element).attr("class") || "";
         return className ? `${tag}.${className}` : tag;
       }).get().slice(0, 12);
+      const renderedHosterRows = $dlcSection.children().map((episodeIndex, episode) => {
+        const $episode = $(episode);
+        const episodeNumber = $episode.find("h2").first().text().trim();
+        return $episode.find("button").map((buttonIndex, button) => {
+          const $button = $(button);
+          const $row = $button.parent();
+          const spans = $row.find("span").map((_, span) => $(span).text().trim()).get();
+          const attributes = Object.entries((button as any).attribs || {}).map(([key, value]) => {
+            const text = String(value || "");
+            let parsed: URL | null = null;
+            try { parsed = new URL(text, VIEWCRATE_ORIGIN); } catch {}
+            return {
+              key,
+              length: text.length,
+              valueType: /^https?:\\/\\//i.test(text) ? "url" : "text",
+              host: parsed && /^https?:$/i.test(parsed.protocol) ? parsed.hostname : undefined,
+              sha256: hashValue(text),
+            };
+          });
+          return {
+            episode: episodeNumber || String(episodeIndex + 1),
+            buttonIndex,
+            label: spans[0] || "",
+            size: spans[1] || "",
+            buttonLabel: $button.attr("aria-label") || "",
+            attributes,
+          };
+        }).get();
+      }).get();
       const firstEpisode = $dlcSection.children().first();
       const firstEpisodeStructure = firstEpisode.find("*").addBack().slice(0, 18).map((_, element) => {
         const attributes = (element as any).attribs || {};
@@ -530,6 +559,9 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
       );
       logger.log(
         `Viewcrate first episode DOM structure | elements=${JSON.stringify(firstEpisodeStructure)}`,
+      );
+      logger.log(
+        `Viewcrate rendered hoster rows | count=${renderedHosterRows.length} | rows=${JSON.stringify(renderedHosterRows)}`,
       );
       if (pageRuntimeState.protectedContent && sectionHosters === 0) {
         const signals = pageRuntimeState.automationSignals;
