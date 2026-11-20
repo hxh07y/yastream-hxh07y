@@ -103,6 +103,37 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
         logger.log(
           `Viewcrate network request | method=${request.method()} | type=${request.resourceType()} | url=${safeUrl(requestUrl)}`,
         );
+        if (path.endsWith("/resolve-link")) {
+          const postData = request.postData() || "";
+          let payloadSummary: unknown = { type: postData ? "text" : "empty", length: postData.length };
+          try {
+            const parsed = JSON.parse(postData);
+            if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+              payloadSummary = Object.fromEntries(
+                Object.entries(parsed).map(([key, value]) => {
+                  const serialized = typeof value === "string" ? value : JSON.stringify(value);
+                  return [key, {
+                    type: value === null ? "null" : Array.isArray(value) ? "array" : typeof value,
+                    length: serialized?.length ?? 0,
+                    sha256: hashValue(serialized ?? ""),
+                  }];
+                }),
+              );
+            }
+          } catch {
+            if (postData) {
+              payloadSummary = {
+                type: "form-or-text",
+                length: postData.length,
+                sha256: hashValue(postData),
+                fields: [...new URLSearchParams(postData).keys()],
+              };
+            }
+          }
+          logger.log(
+            `Viewcrate resolve-link request details | method=${request.method()} | contentType=${request.headers()["content-type"] || "unknown"} | payload=${JSON.stringify(payloadSummary)}`,
+          );
+        }
       };
       const onViewcrateResponse = (response: HTTPResponse) => {
         const responseUrl = response.url();
@@ -125,6 +156,41 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
         logger.log(
           `Viewcrate network response | status=${response.status()} | type=${resourceType} | contentType=${contentType} | url=${safeUrl(responseUrl)}`,
         );
+        if (path.endsWith("/resolve-link")) {
+          responseDiagnosticTasks.push((async () => {
+            try {
+              const body = await response.text();
+              let parsed: any;
+              try { parsed = JSON.parse(body); } catch { parsed = null; }
+              const describe = (value: unknown): unknown => {
+                if (typeof value === "string") {
+                  let url: URL | null = null;
+                  try { url = new URL(value); } catch {}
+                  return url
+                    ? { type: "url", host: url.hostname, path: url.pathname, length: value.length }
+                    : { type: "string", length: value.length, sha256: hashValue(value) };
+                }
+                if (Array.isArray(value)) return { type: "array", length: value.length, items: value.slice(0, 5).map(describe) };
+                if (value && typeof value === "object") {
+                  return {
+                    type: "object",
+                    fields: Object.fromEntries(
+                      Object.entries(value as Record<string, unknown>)
+                        .slice(0, 30)
+                        .map(([key, item]) => [key, describe(item)]),
+                    ),
+                  };
+                }
+                return { type: value === null ? "null" : typeof value };
+              };
+              logger.log(
+                `Viewcrate resolve-link response details | status=${response.status()} | bytes=${Buffer.byteLength(body)} | parsedJson=${Boolean(parsed)} | structure=${JSON.stringify(describe(parsed ?? body))}`,
+              );
+            } catch (error) {
+              logger.warn(`Viewcrate resolve-link response details unavailable | reason=${String(error).slice(0, 120)}`);
+            }
+          })());
+        }
 
         // Compare the server responses before page JavaScript runs. Only structural
         // metadata is logged; response values, cookies, tokens and URLs are omitted.
