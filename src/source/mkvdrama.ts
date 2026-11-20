@@ -859,6 +859,9 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
           );
           throw error;
         }
+        this.logger.log(
+          `MKVDrama link extraction result | source=${new URL(redirectedUrl).hostname} | urls=${urls.length} | episodes=${episodes.length} | episodeNumbers=${episodes.map((episode) => episode.ep).join(",")} | episodeHosterEntries=${episodes.reduce((total, episode) => total + episode.data.length, 0)}`,
+        );
         const streamRows = hosterToStream(
           urls,
           episodes,
@@ -867,6 +870,9 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
           this.name,
           mkvdramaId,
           "1",
+        );
+        this.logger.log(
+          `MKVDrama link stream mapping | generated=${streamRows.filter((row) => row !== undefined).length} | rows=${streamRows.length}`,
         );
         return streamRows;
       }),
