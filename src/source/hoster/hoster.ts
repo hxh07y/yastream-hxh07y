@@ -68,12 +68,12 @@ export function filterHosterUrlsFromUrls(urls: string[]) {
         break;
     }
   });
-  logger.log(`PIXELDRAIN ${pixeldrainUrls.length}`);
-  logger.log(`GOFILE ${gofileUrls.length}`);
-  logger.log(`MEGA ${megaUrls.length}`);
-  logger.log(`VIKING ${vikingUrls.length}`);
-  logger.log(`SEND ${sendUrls.length}`);
-  logger.log(`FILEDITCH ${fileditchUrls.length}`);
+  logger.debug(`PIXELDRAIN ${pixeldrainUrls.length}`);
+  logger.debug(`GOFILE ${gofileUrls.length}`);
+  logger.debug(`MEGA ${megaUrls.length}`);
+  logger.debug(`VIKING ${vikingUrls.length}`);
+  logger.debug(`SEND ${sendUrls.length}`);
+  logger.debug(`FILEDITCH ${fileditchUrls.length}`);
   return { pixeldrainUrls, gofileUrls, megaUrls, vikingUrls, sendUrls, fileditchUrls };
 }
 
@@ -102,7 +102,7 @@ export function hosterToStream(
       expected[item.hoster] = (expected[item.hoster] || 0) + 1;
     }
   }
-  logger.log(
+  logger.debug(
     `Stream mapping input | urls=${urls.length} | episodes=${episodes.length} | episodeNumbers=${episodes.map((episode) => episode.ep).join(",")} | expectedHosters=${JSON.stringify(expected)} | availableUrls=${JSON.stringify(available)}`,
   );
   const streamRows = episodes
