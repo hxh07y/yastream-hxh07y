@@ -476,7 +476,7 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
             try {
               const resourceUrl = new URL(name);
               return resourceUrl.origin === location.origin &&
-                /\\.js(?:\\?|$)/i.test(resourceUrl.pathname);
+                /\.js(?:\?|$)/i.test(resourceUrl.pathname);
             } catch {
               return false;
             }
@@ -494,7 +494,7 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
             while ((match = markers.exec(source)) && snippets.length < 24) {
               const start = Math.max(0, match.index - 180);
               const end = Math.min(source.length, match.index + match[0].length + 260);
-              const snippet = source.slice(start, end).replace(/\\s+/g, " ");
+              const snippet = source.slice(start, end).replace(/\s+/g, " ");
               if (!snippets.includes(snippet)) snippets.push(snippet);
             }
             if (snippets.length) {
