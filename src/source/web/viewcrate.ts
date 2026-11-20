@@ -93,7 +93,7 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
         const requestUrl = request.url();
         if (requestUrl.includes("/bootstrap")) requestStartedAt.set(request, Date.now());
         if (request.resourceType() === "script") {
-          logger.log(
+          logger.debug(
             `Viewcrate script request | method=${request.method()} | url=${safeUrl(requestUrl)}`,
           );
         }
@@ -130,7 +130,7 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
               };
             }
           }
-          logger.log(
+          logger.debug(
             `Viewcrate resolve-link request details | method=${request.method()} | contentType=${request.headers()["content-type"] || "unknown"} | payload=${JSON.stringify(payloadSummary)}`,
           );
         }
@@ -140,11 +140,11 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
         const resourceType = response.request().resourceType();
         const contentType = response.headers()["content-type"] || "unknown";
         if (resourceType === "script") {
-          logger.log(`Viewcrate script response | status=${response.status()} | contentType=${contentType} | url=${safeUrl(responseUrl)}`);
+          logger.debug(`Viewcrate script response | status=${response.status()} | contentType=${contentType} | url=${safeUrl(responseUrl)}`);
           responseDiagnosticTasks.push((async () => {
             try {
               const body = await response.buffer();
-              logger.log(`Viewcrate script fingerprint | status=${response.status()} | bytes=${body.length} | sha256=${hashValue(body.toString("utf8"))} | url=${safeUrl(responseUrl)}`);
+              logger.debug(`Viewcrate script fingerprint | status=${response.status()} | bytes=${body.length} | sha256=${hashValue(body.toString("utf8"))} | url=${safeUrl(responseUrl)}`);
             } catch (error) {
               logger.warn(`Viewcrate script fingerprint unavailable | url=${safeUrl(responseUrl)} | reason=${String(error).slice(0, 100)}`);
             }
@@ -153,7 +153,7 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
         if (!responseUrl.startsWith(VIEWCRATE_ORIGIN)) return;
         const path = new URL(responseUrl).pathname;
         if (!/api|unlock|protect|password|resolve/i.test(path) && !path.includes("/c/")) return;
-        logger.log(
+        logger.debug(
           `Viewcrate network response | status=${response.status()} | type=${resourceType} | contentType=${contentType} | url=${safeUrl(responseUrl)}`,
         );
         if (path.endsWith("/resolve-link")) {
@@ -183,7 +183,7 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
                 }
                 return { type: value === null ? "null" : typeof value };
               };
-              logger.log(
+              logger.debug(
                 `Viewcrate resolve-link response details | status=${response.status()} | bytes=${Buffer.byteLength(body)} | parsedJson=${Boolean(parsed)} | structure=${JSON.stringify(describe(parsed ?? body))}`,
               );
             } catch (error) {
@@ -212,7 +212,7 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
                   try { return safeUrl(new URL($(script).attr("src") || "", responseUrl).toString()); }
                   catch { return "[invalid-script-url]"; }
                 }).get();
-                logger.log(
+                logger.debug(
                   `Viewcrate initial HTML structure | bytes=${Buffer.byteLength(body)} | protectedText=${$("body").text().toLowerCase().includes("protected content")} | dlcSectionPresent=${Boolean($section.attr("data-resolve-url"))} | sectionChildren=${$section.children().length} | sectionTextLength=${$section.text().trim().length} | forms=${JSON.stringify(initialForms)} | scripts=${JSON.stringify(scripts)}`,
                 );
               } else {
@@ -256,12 +256,12 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
                 });
                 const requestStarted = requestStartedAt.get(response.request());
                 const durationMs = requestStarted === undefined ? "unknown" : Date.now() - requestStarted;
-                logger.log(
+                logger.debug(
                   `Viewcrate bootstrap structure | status=${response.status()} | durationMs=${durationMs} | bytes=${Buffer.byteLength(body)} | parsedJson=${Boolean(payload)} | structure=${JSON.stringify(fields)} | fingerprints=${JSON.stringify(fingerprints)} | rItems=${JSON.stringify(rDiagnostics)}`,
                 );
               }
             } catch (error) {
-              logger.warn(`Viewcrate response structure unavailable | type=${resourceType} | reason=${String(error).slice(0, 100)}`);
+              logger.debug(`Viewcrate response structure unavailable | type=${resourceType} | reason=${String(error).slice(0, 100)}`);
             }
           })());
         }
@@ -381,7 +381,7 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
       });
       removeVisibilityOverride = () =>
         page.removeScriptToEvaluateOnNewDocument(visibilityOverride.identifier);
-      logger.log("Viewcrate page-scoped visibility override installed");
+      logger.debug("Viewcrate page-scoped visibility override installed");
 
       let navigationResponse = await page.goto(url, {
         waitUntil: "domcontentloaded",
@@ -511,7 +511,7 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
         return output;
       }).catch(() => []);
       if (handlerSourceDiagnostics.length) {
-        logger.log(
+        logger.debug(
           `Viewcrate loaded handler source diagnostics | bundles=${JSON.stringify(handlerSourceDiagnostics)}`,
         );
       } else {
@@ -555,7 +555,7 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
         return Array.isArray(diagnostics?.timeline) ? diagnostics.timeline : [];
       }).catch(() => []);
       if (runtimeTimeline.length) {
-        logger.log(`Viewcrate DOM mutation timeline | events=${JSON.stringify(runtimeTimeline)}`);
+        logger.debug(`Viewcrate DOM mutation timeline | events=${JSON.stringify(runtimeTimeline)}`);
         const firstMutation = runtimeTimeline[0];
         const bootstrapResponseEndMs = Number(runtimeTimeline[runtimeTimeline.length - 1].bootstrapResponseEndMs || 0);
         const firstPostBootstrapMutation = runtimeTimeline.find((event: any) =>
@@ -671,12 +671,12 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
       }
 
       logger.log(
-        `Viewcrate browser page ready | status=${status} | bytes=${Buffer.byteLength(html)} | episodeHosters=${sectionHosters} | renderedButtons=${documentHosters} | protectedText=${pageText.toLowerCase().includes("protected content")} | passwordProvided=${Boolean(password)} | forms=${formSummary.length} | sectionPreview=${sectionPreview} | sectionChildren=${JSON.stringify(sectionChildren)} | sectionAttributes=${JSON.stringify(sectionAttributes)} | pageRuntimeState=${JSON.stringify(pageRuntimeState)}`,
+        `Viewcrate page ready | status=${status} | episodeHosters=${sectionHosters} | renderedButtons=${documentHosters} | protected=${pageRuntimeState.protectedContent}`,
       );
-      logger.log(
+      logger.debug(
         `Viewcrate first episode DOM structure | elements=${JSON.stringify(firstEpisodeStructure)}`,
       );
-      logger.log(
+      logger.debug(
         `Viewcrate rendered hoster rows | count=${renderedHosterRows.length} | rows=${JSON.stringify(renderedHosterRows)}`,
       );
       if (pageRuntimeState.protectedContent && sectionHosters === 0) {
@@ -692,7 +692,7 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
       if (removeVisibilityOverride) {
         try {
           await removeVisibilityOverride();
-          logger.log("Viewcrate page-scoped visibility override removed");
+          logger.debug("Viewcrate page-scoped visibility override removed");
         } catch (error) {
           logger.warn("Could not remove Viewcrate visibility override | reason=" + String(error).slice(0, 120));
         }
