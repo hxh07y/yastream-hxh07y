@@ -735,7 +735,8 @@ export function getEpisodeHosters(html: string): EpisodeHoster[] {
     const $episode = $(episode);
     const episodeTitle = $episode.find("h2").first().text().trim();
     const episodeMatch = episodeTitle.match(/S\d+E(\d+)/i);
-    if (!episodeMatch) return;
+    const episodeNumber = episodeMatch?.[1];
+    if (!episodeNumber) return;
 
     const data: { hoster: Hoster; size: string }[] = [];
     // The current page stores an opaque, randomized token on each download
@@ -767,17 +768,19 @@ export function getEpisodeHosters(html: string): EpisodeHoster[] {
       ) || "";
       const sizeMatch = sizeText.match(/(\d+(?:\.\d+)?)\s*(GB|MB)\b/i);
       let size = "";
-      if (sizeMatch) {
-        size = sizeMatch[2].toUpperCase() === "MB"
-          ? (Number.parseFloat(sizeMatch[1]) / 1024).toFixed(2)
-          : sizeMatch[1];
+      const sizeValue = sizeMatch?.[1];
+      const sizeUnit = sizeMatch?.[2];
+      if (sizeValue !== undefined && sizeUnit !== undefined) {
+        size = sizeUnit.toUpperCase() === "MB"
+          ? (Number.parseFloat(sizeValue) / 1024).toFixed(2)
+          : sizeValue;
       }
 
       data.push({ hoster, size });
     });
 
     episodes.push({
-      ep: Number.parseInt(episodeMatch[1], 10),
+      ep: Number.parseInt(episodeNumber, 10),
       data,
     });
   });
