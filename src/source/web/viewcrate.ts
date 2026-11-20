@@ -262,7 +262,7 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
             hosterCount: Array.from(section?.querySelectorAll("*") || []).filter((element) =>
               Array.from(element.attributes).some((attribute) =>
                 attribute.name.startsWith("data-") &&
-                /pixeldrain|gofile|send\\.now|send\\.cm|mega\\.nz|viking|fileditch/i.test(attribute.value),
+                /pixeldrain|gofile|send\.now|send\.cm|mega\.nz|viking|fileditch/i.test(attribute.value),
               ),
             ).length,
             protectedContent: bodyText.includes("protected content"),
