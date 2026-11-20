@@ -402,6 +402,7 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
               transferSize: resource.transferSize || 0,
             };
           });
+        const pageText = document.body?.innerText?.toLowerCase() || "";
         return {
           visibilityState: document.visibilityState,
           hidden: document.hidden,
@@ -410,6 +411,12 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
           readyState: document.readyState,
           sectionChildCount: section?.children.length ?? 0,
           downloadHandlerBound: section?.getAttribute("data-download-handler-bound") === "true",
+          protectedContent: pageText.includes("protected content"),
+          automationSignals: {
+            webdriver: navigator.webdriver,
+            outerWidth: window.outerWidth,
+            outerHeight: window.outerHeight,
+          },
           bootstrapResource,
         };
       }).catch(() => ({ visibilityState: "unavailable", hidden: null, focused: null, visibilityOverride: true, readyState: "unavailable", sectionChildCount: -1, downloadHandlerBound: false, bootstrapResource: [], render: null }));
@@ -474,6 +481,13 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
       logger.log(
         `Viewcrate browser page ready | status=${status} | bytes=${Buffer.byteLength(html)} | episodeHosters=${sectionHosters} | documentHosters=${documentHosters} | protectedText=${pageText.toLowerCase().includes("protected content")} | passwordProvided=${Boolean(password)} | forms=${formSummary.length} | sectionPreview=${sectionPreview} | sectionChildren=${JSON.stringify(sectionChildren)} | sectionAttributes=${JSON.stringify(sectionAttributes)} | pageRuntimeState=${JSON.stringify(pageRuntimeState)}`,
       );
+      if (pageRuntimeState.protectedContent && sectionHosters === 0) {
+        const signals = pageRuntimeState.automationSignals;
+        logger.warn(
+          `Viewcrate anti-automation response detected | webdriver=${signals?.webdriver ?? "unavailable"} | outerWidth=${signals?.outerWidth ?? "unavailable"} | outerHeight=${signals?.outerHeight ?? "unavailable"}`,
+        );
+        throw new ViewcrateError("Viewcrate blocked the automated browser context (Protected Content)");
+      }
       return html;
     } finally {
       removeNetworkDiagnostics?.();
