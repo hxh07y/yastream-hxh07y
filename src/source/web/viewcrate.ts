@@ -259,7 +259,12 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
             readyState: document.readyState,
             sectionPresent: Boolean(section),
             sectionChildren: section?.children.length || 0,
-            hosterCount: section?.querySelectorAll("div[class^='y_']").length || 0,
+            hosterCount: Array.from(section?.querySelectorAll("*") || []).filter((element) =>
+              Array.from(element.attributes).some((attribute) =>
+                attribute.name.startsWith("data-") &&
+                /pixeldrain|gofile|send\\.now|send\\.cm|mega\\.nz|viking|fileditch/i.test(attribute.value),
+              ),
+            ).length,
             protectedContent: bodyText.includes("protected content"),
             downloadHandlerBound: section?.getAttribute("data-download-handler-bound") === "true",
           };
@@ -382,11 +387,17 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
           timeout: 25000,
         })
         .catch(() => null);
-      // Viewcrate renders episode hosters with JavaScript after the base DOM.
+      // Wait for the page's own episode renderer instead of relying on
+      // generated CSS class prefixes, which can change between deployments.
       await page
-        .waitForSelector("main > div:nth-child(3) div[class^='y_']", {
-          timeout: 15000,
-        })
+        .waitForFunction(() => {
+          const section = document.querySelector("main > div:nth-child(3)[data-resolve-url]");
+          return Boolean(
+            section &&
+            section.children.length > 0 &&
+            section.getAttribute("data-download-handler-bound") === "true",
+          );
+        }, { timeout: 15000 })
         .catch(() => null);
 
       const pageRuntimeState = await page.evaluate(() => {
@@ -446,8 +457,12 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
       const $ = cheerio.load(html);
       const $dlcSection = $("main > div").eq(2);
       const hasDlcSection = Boolean($dlcSection.attr("data-resolve-url"));
-      const sectionHosters = $dlcSection.find("div[class^='y_']").length;
-      const documentHosters = $("div[class^='y_']").length;
+      const parsedEpisodeHosters = getEpisodeHosters(html);
+      const sectionHosters = parsedEpisodeHosters.reduce(
+        (total, episode) => total + episode.data.length,
+        0,
+      );
+      const documentHosters = $("*[data-*]").length;
       const pageText = $("body").text().replace(/\s+/g, " ").trim();
       const sectionPreview = $dlcSection.text().replace(/\s+/g, " ").trim().slice(0, 250);
       const sectionChildren = $dlcSection.children().map((_, element) => {
@@ -533,10 +548,20 @@ export function getEpisodeHosters(html: string): EpisodeHoster[] {
   $episodes.each((_, episode) => {
     const $episode = $(episode);
     const episodeTitle = $episode.find("h2").text();
-    const episodeHosters = $episode.find(`div[class^="y_"]`);
+    // Viewcrate's generated hoster class prefix changes between deployments
+    // (for example, y_* to z_*). Identify hoster cards by their data-* URL
+    // attributes instead of depending on an obfuscated CSS class name.
+    const episodeHosters = $episode.find("*").filter((_, element) =>
+      Object.entries((element as any).attribs || {}).some(
+        ([key, value]) =>
+          key.startsWith("data-") &&
+          typeof value === "string" &&
+          Boolean(getHosterFromUrl(value)),
+      ),
+    );
     const data: { hoster: Hoster; size: string }[] = [];
-    episodeHosters.each((_, hoster) => {
-      const $hoster = $(hoster);
+    episodeHosters.each((_, hosterElement) => {
+      const $hoster = $(hosterElement);
       const sizeText = $hoster.find("span").last().text();
       let size = "";
       if (sizeText.includes("GB")) {
