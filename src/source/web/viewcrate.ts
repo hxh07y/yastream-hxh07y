@@ -462,7 +462,14 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
         (total, episode) => total + episode.data.length,
         0,
       );
-      const documentHosters = $("*[data-*]").length;
+      const documentHosters = $("*").filter((_, element) =>
+        Object.entries((element as any).attribs || {}).some(
+          ([key, value]) =>
+            key.startsWith("data-") &&
+            typeof value === "string" &&
+            Boolean(getHosterFromUrl(value)),
+        ),
+      ).length;
       const pageText = $("body").text().replace(/\s+/g, " ").trim();
       const sectionPreview = $dlcSection.text().replace(/\s+/g, " ").trim().slice(0, 250);
       const sectionChildren = $dlcSection.children().map((_, element) => {
