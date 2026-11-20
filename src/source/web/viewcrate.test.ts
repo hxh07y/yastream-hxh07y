@@ -65,11 +65,35 @@ describe("Viewcrate Hoster", () => {
     console.log("links", links);
   }, 15000);
 
-  it("get episode hosts", () => {
+  it("maps rendered hoster badges to their containing episodes", () => {
     const html = fs.readFileSync("./src/source/web/viewcrate2.html", "utf8");
     const episodes = getEpisodeHosters(html);
-    console.log("episodes", JSON.stringify(episodes, null, 2));
-    return episodes;
+
+    expect(episodes).toHaveLength(11);
+    expect(episodes.map(({ ep }) => ep)).toEqual(
+      Array.from({ length: 11 }, (_, index) => index + 1),
+    );
+    expect(
+      episodes.reduce((total, episode) => total + episode.data.length, 0),
+    ).toBe(33);
+
+    const hosterCounts = episodes
+      .flatMap(({ data }) => data)
+      .reduce<Record<string, number>>((counts, { hoster }) => {
+        counts[hoster] = (counts[hoster] || 0) + 1;
+        return counts;
+      }, {});
+
+    expect(hosterCounts).toEqual({
+      pixeldrain: 11,
+      gofile: 11,
+      send: 11,
+    });
+    expect(
+      episodes.every((episode) =>
+        episode.data.every(({ size }) => Number(size) > 0),
+      ),
+    ).toBe(true);
   });
 
   it("get dlc url", async () => {
