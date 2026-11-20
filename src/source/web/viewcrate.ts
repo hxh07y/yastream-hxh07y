@@ -466,6 +466,58 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
         }, { timeout: 15000 })
         .catch(() => null);
 
+      // Inspect the already-loaded Viewcrate bundle from the page itself. This avoids
+      // requiring a user to click a hoster after Nuvio has failed to extract streams.
+      // Only short source windows around static handler/endpoint markers are logged.
+      const handlerSourceDiagnostics = await page.evaluate(async () => {
+        const resources = Array.from(performance.getEntriesByType("resource"))
+          .map((entry) => entry.name)
+          .filter((name) => {
+            try {
+              const resourceUrl = new URL(name);
+              return resourceUrl.origin === location.origin &&
+                /\\.js(?:\\?|$)/i.test(resourceUrl.pathname);
+            } catch {
+              return false;
+            }
+          })
+          .slice(-12);
+        const output: Array<{ url: string; bytes: number; snippets: string[] }> = [];
+        for (const resource of resources) {
+          try {
+            const response = await fetch(resource, { credentials: "same-origin" });
+            if (!response.ok) continue;
+            const source = await response.text();
+            const markers = /resolve-link|data-[a-z0-9]{5,}|open-base-url|download-handler-bound/gi;
+            const snippets: string[] = [];
+            let match: RegExpExecArray | null;
+            while ((match = markers.exec(source)) && snippets.length < 24) {
+              const start = Math.max(0, match.index - 180);
+              const end = Math.min(source.length, match.index + match[0].length + 260);
+              const snippet = source.slice(start, end).replace(/\\s+/g, " ");
+              if (!snippets.includes(snippet)) snippets.push(snippet);
+            }
+            if (snippets.length) {
+              output.push({
+                url: new URL(resource).pathname,
+                bytes: source.length,
+                snippets,
+              });
+            }
+          } catch {
+            // A bundle that cannot be fetched from the page is skipped.
+          }
+        }
+        return output;
+      }).catch(() => []);
+      if (handlerSourceDiagnostics.length) {
+        logger.log(
+          `Viewcrate loaded handler source diagnostics | bundles=${JSON.stringify(handlerSourceDiagnostics)}`,
+        );
+      } else {
+        logger.warn("Viewcrate loaded handler source diagnostics unavailable | no matching bundle snippets found");
+      }
+
       const pageRuntimeState = await page.evaluate(() => {
         const section = document.querySelector("main > div:nth-child(3)[data-resolve-url]");
         const bootstrapResource = performance
