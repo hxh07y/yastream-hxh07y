@@ -419,7 +419,7 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
           },
           bootstrapResource,
         };
-      }).catch(() => ({ visibilityState: "unavailable", hidden: null, focused: null, visibilityOverride: true, readyState: "unavailable", sectionChildCount: -1, downloadHandlerBound: false, bootstrapResource: [], render: null }));
+      }).catch(() => ({ visibilityState: "unavailable", hidden: null, focused: null, visibilityOverride: true, readyState: "unavailable", sectionChildCount: -1, downloadHandlerBound: false, protectedContent: false, automationSignals: { webdriver: null, outerWidth: null, outerHeight: null }, bootstrapResource: [], render: null }));
       const runtimeTimeline = await page.evaluate(() => {
         const diagnostics = (window as any).__viewcrateRuntimeDiagnostics;
         diagnostics?.getSnapshot?.();
