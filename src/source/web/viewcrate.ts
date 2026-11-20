@@ -580,14 +580,9 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
         (total, episode) => total + episode.data.length,
         0,
       );
-      const documentHosters = $("*").filter((_, element) =>
-        Object.entries((element as any).attribs || {}).some(
-          ([key, value]) =>
-            key.startsWith("data-") &&
-            typeof value === "string" &&
-            Boolean(getHosterFromUrl(value)),
-        ),
-      ).length;
+      // Count rendered download controls independently from supported hoster
+      // mappings; Viewcrate's button attributes contain opaque tokens, not URLs.
+      const documentHosters = $dlcSection.find("button").length;
       const pageText = $("body").text().replace(/\s+/g, " ").trim();
       const sectionPreview = $dlcSection.text().replace(/\s+/g, " ").trim().slice(0, 250);
       const sectionChildren = $dlcSection.children().map((_, element) => {
@@ -676,7 +671,7 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
       }
 
       logger.log(
-        `Viewcrate browser page ready | status=${status} | bytes=${Buffer.byteLength(html)} | episodeHosters=${sectionHosters} | documentHosters=${documentHosters} | protectedText=${pageText.toLowerCase().includes("protected content")} | passwordProvided=${Boolean(password)} | forms=${formSummary.length} | sectionPreview=${sectionPreview} | sectionChildren=${JSON.stringify(sectionChildren)} | sectionAttributes=${JSON.stringify(sectionAttributes)} | pageRuntimeState=${JSON.stringify(pageRuntimeState)}`,
+        `Viewcrate browser page ready | status=${status} | bytes=${Buffer.byteLength(html)} | episodeHosters=${sectionHosters} | renderedButtons=${documentHosters} | protectedText=${pageText.toLowerCase().includes("protected content")} | passwordProvided=${Boolean(password)} | forms=${formSummary.length} | sectionPreview=${sectionPreview} | sectionChildren=${JSON.stringify(sectionChildren)} | sectionAttributes=${JSON.stringify(sectionAttributes)} | pageRuntimeState=${JSON.stringify(pageRuntimeState)}`,
       );
       logger.log(
         `Viewcrate first episode DOM structure | elements=${JSON.stringify(firstEpisodeStructure)}`,
