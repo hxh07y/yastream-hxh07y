@@ -731,46 +731,62 @@ function getProtectedContent(html: string) {
 
 export function getEpisodeHosters(html: string): EpisodeHoster[] {
   const $ = cheerio.load(html);
-  const $episodes = $("main > div").eq(2).children();
+  // The section marker is stable; the generated episode/card class names and
+  // data-attribute names are randomized by Viewcrate.
+  const $section = $("main > div[data-resolve-url]").first();
   const episodes: EpisodeHoster[] = [];
-  $episodes.each((_, episode) => {
+
+  $section.children().each((_, episode) => {
     const $episode = $(episode);
-    const episodeTitle = $episode.find("h2").text();
-    // Viewcrate's generated hoster class prefix changes between deployments
-    // (for example, y_* to z_*). Identify hoster cards by their data-* URL
-    // attributes instead of depending on an obfuscated CSS class name.
-    const episodeHosters = $episode.find("*").filter((_, element) =>
-      Object.entries((element as any).attribs || {}).some(
-        ([key, value]) =>
-          key.startsWith("data-") &&
-          typeof value === "string" &&
-          Boolean(getHosterFromUrl(value)),
-      ),
-    );
+    const episodeTitle = $episode.find("h2").first().text().trim();
+    const episodeMatch = episodeTitle.match(/S\\d+E(\\d+)/i);
+    if (!episodeMatch) return;
+
     const data: { hoster: Hoster; size: string }[] = [];
-    episodeHosters.each((_, hosterElement) => {
-      const $hoster = $(hosterElement);
-      const sizeText = $hoster.find("span").last().text();
+    // The current page stores an opaque, randomized token on each download
+    // button. The hoster and file size remain visible in the button's row;
+    // do not mistake the opaque token for a direct URL.
+    $episode.find("button").each((__, button) => {
+      const $row = $(button).parent();
+      const spanTexts = $row.find("span").map((___, span) =>
+        $(span).text().trim(),
+      ).get();
+
+      const hosterLabel = spanTexts.find((label) => {
+        if (!label) return false;
+        const hosterUrl = /^https?:\\/\\//i.test(label)
+          ? label
+          : `https://${label}`;
+        return Boolean(getHosterFromUrl(hosterUrl));
+      });
+      if (!hosterLabel) return;
+
+      const hosterUrl = /^https?:\\/\\//i.test(hosterLabel)
+        ? hosterLabel
+        : `https://${hosterLabel}`;
+      const hoster = getHosterFromUrl(hosterUrl);
+      if (!hoster) return;
+
+      const sizeText = spanTexts.find((value) =>
+        /\\d+(?:\\.\\d+)?\\s*(?:GB|MB)\\b/i.test(value),
+      ) || "";
+      const sizeMatch = sizeText.match(/(\\d+(?:\\.\\d+)?)\\s*(GB|MB)\\b/i);
       let size = "";
-      if (sizeText.includes("GB")) {
-        size = sizeText.replace(/GB/, "").trim();
-      } else if (sizeText.includes("MB")) {
-        size = (parseFloat(sizeText.replace(/MB/, "").trim()) / 1024).toFixed(
-          2,
-        );
+      if (sizeMatch) {
+        size = sizeMatch[2].toUpperCase() === "MB"
+          ? (Number.parseFloat(sizeMatch[1]) / 1024).toFixed(2)
+          : sizeMatch[1];
       }
-      for (const [key, value] of Object.entries($hoster.attr() || {})) {
-        if (key.startsWith("data-") && value) {
-          const hoster = getHosterFromUrl(value);
-          if (hoster) data.push({ size, hoster });
-        }
-      }
+
+      data.push({ hoster, size });
     });
+
     episodes.push({
-      ep: parseInt(episodeTitle.replace(/.*E/, "")),
-      data: data,
+      ep: Number.parseInt(episodeMatch[1], 10),
+      data,
     });
   });
+
   return episodes;
 }
 
