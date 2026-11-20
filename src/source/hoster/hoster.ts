@@ -88,6 +88,23 @@ export function hosterToStream(
 ) {
   const { pixeldrainUrls, gofileUrls, megaUrls, vikingUrls, sendUrls, fileditchUrls } =
     filterHosterUrlsFromUrls(urls.flat());
+  const available = {
+    [Hoster.PIXELDRAIN]: pixeldrainUrls.length,
+    [Hoster.GOFILE]: gofileUrls.length,
+    [Hoster.MEGA]: megaUrls.length,
+    [Hoster.VIKING]: vikingUrls.length,
+    [Hoster.SEND]: sendUrls.length,
+    [Hoster.FILEDITCH]: fileditchUrls.length,
+  };
+  const expected: Record<string, number> = {};
+  for (const episode of episodes) {
+    for (const item of episode.data) {
+      expected[item.hoster] = (expected[item.hoster] || 0) + 1;
+    }
+  }
+  logger.log(
+    `Stream mapping input | urls=${urls.length} | episodes=${episodes.length} | episodeNumbers=${episodes.map((episode) => episode.ep).join(",")} | expectedHosters=${JSON.stringify(expected)} | availableUrls=${JSON.stringify(available)}`,
+  );
   const streamRows = episodes
     .map((episode) => {
       const streamEpisodeRows = episode.data.map((hosterData) => {
@@ -137,6 +154,10 @@ export function hosterToStream(
       return streamEpisodeRows;
     })
     .flat();
+  const generated = streamRows.filter((row) => row !== undefined).length;
+  logger.log(
+    `Stream mapping result | generated=${generated} | missing=${streamRows.length - generated} | rows=${streamRows.length}`,
+  );
   return streamRows;
 }
 
