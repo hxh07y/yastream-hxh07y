@@ -480,7 +480,10 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
       const firstEpisode = $dlcSection.children().first();
       const firstEpisodeStructure = firstEpisode.find("*").addBack().slice(0, 18).map((_, element) => {
         const attributes = (element as any).attribs || {};
-        const href = attributes.href ? new URL(attributes.href, VIEWCRATE_ORIGIN) : null;
+        let href: URL | null = null;
+        try {
+          if (attributes.href) href = new URL(attributes.href, VIEWCRATE_ORIGIN);
+        } catch {}
         const dataValues = Object.entries(attributes)
           .filter(([key, value]) => key.startsWith("data-") && typeof value === "string")
           .map(([key, value]) => {
