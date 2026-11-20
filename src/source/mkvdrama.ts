@@ -449,7 +449,7 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
             const downloadSectionCount = await page.evaluate(
               () => document.querySelectorAll("div.soraddlx").length,
             );
-            this.logger.log(
+            this.logger.debug(
               `MKVDrama detail DOM ready | downloadSections=${downloadSectionCount} | url=${page.url()}`,
             );
 
@@ -493,7 +493,7 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
         return null;
       }
       const $ = cheerio.load(content);
-      this.logger.log(
+      this.logger.debug(
         `MKVDrama detail parsing | bytes=${Buffer.byteLength(content)} | title=${$("h1").text().trim()} | time=${JSON.stringify($("time").text())} | qualityBlocks=${$("div.soraddlx").length}`,
       );
       const rawTitle = $("title").text();
@@ -611,7 +611,7 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
         .attr("data-raw-body");
       const password =
         rawPassword?.replace(/\*\*/g, "").trim() || null;
-      this.logger.log(
+      this.logger.debug(
         `MKVDrama password diagnostic | moderatorBadges=${moderatorBadges.length} | moderatorCard=${moderatorCard.length > 0} | rawBodyAttribute=${rawPassword !== undefined} | passwordFound=${Boolean(password)} | passwordLength=${password?.length ?? 0}`,
       );
 
@@ -871,7 +871,7 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
           mkvdramaId,
           "1",
         );
-        this.logger.log(
+        this.logger.debug(
           `MKVDrama link stream mapping | generated=${streamRows.filter((row) => row !== undefined).length} | rows=${streamRows.length}`,
         );
         return streamRows;
@@ -987,7 +987,7 @@ export class MkvdramaScraper extends BaseProvider implements MkvdramaJobRunner {
           redirectedUrl = finalUrl;
         }
       }
-      this.logger.log(
+      this.logger.debug(
         `MKVDrama Link 2 redirect | found=${Boolean(redirectedUrl)} | url=${redirectedUrl || "none"}`,
       );
       return redirectedUrl;
