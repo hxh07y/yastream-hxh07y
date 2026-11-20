@@ -220,7 +220,7 @@ export function reserveCdpPageForManualVerification(operationName: string): stri
 
 export function releaseCdpPageReservation(id: string): void {
   if (!cdpPageReservation || cdpPageReservation.id !== id) return;
-  logger.log(
+  logger.debug(
     `CDP page reservation released | id=${id} | op=${cdpPageReservation.operationName}`,
   );
   cdpPageReservation = null;
@@ -238,7 +238,7 @@ export async function withCdpPageLock<T>(
   }
   const operationId = ++cdpPageOperationSequence;
   const requestedAt = Date.now();
-  logger.log(
+  logger.debug(
     `CDP lock request | id=${operationId} | op=${operationName} | pid=${process.pid} | active=${activeCdpPageOperation}`,
   );
   const previousOperation = cdpPageQueue;
@@ -261,14 +261,14 @@ export async function withCdpPageLock<T>(
 
   const acquiredAt = Date.now();
   activeCdpPageOperation = `${operationName}#${operationId}`;
-  logger.log(
+  logger.debug(
     `CDP lock acquired | id=${operationId} | op=${operationName} | pid=${process.pid} | waitMs=${acquiredAt - requestedAt}`,
   );
   let released = false;
   const releaseLock = () => {
     if (released) return;
     released = true;
-    logger.log(
+    logger.debug(
       `CDP lock released | id=${operationId} | op=${operationName} | pid=${process.pid} | heldMs=${Date.now() - acquiredAt}`,
     );
     activeCdpPageOperation = cdpPageReservation
@@ -340,7 +340,7 @@ async function postRedirectedUrlCDPLocked(
         interceptRequest.url() === formActionUrl
       ) {
         postSubmitted = true;
-        logger.log(`Send POST submitted | ${interceptRequest.url()} | bodyLength=${(postData || "").length}`);
+        logger.debug(`Send POST submitted | ${interceptRequest.url()} | bodyLength=${(postData || "").length}`);
         void interceptRequest.continue({
           method: "POST",
           postData: postData || "",
@@ -385,7 +385,7 @@ async function postRedirectedUrlCDPLocked(
         } catch {
           // Keep the original URL if parsing fails.
         }
-        logger.log(
+        logger.debug(
           `Send CDP request | type=${params.type || "unknown"} | method=${params.request?.method || "unknown"} | url=${displayUrl} | headers=${JSON.stringify(safeHeaders)} | redirectStatus=${redirectResponse?.status ?? "none"} | location=${typeof locationHeader === "string" ? safeUrlLabel(new URL(locationHeader, reqUrl).toString()) : "none"}`,
         );
         if (locationHeader && typeof locationHeader === "string") {
@@ -437,14 +437,14 @@ async function postRedirectedUrlCDPLocked(
       } catch {
         // Keep the original URL if parsing fails.
       }
-      logger.log(
+      logger.debug(
         `Send CDP response | type=${params.type || "unknown"} | status=${response?.status ?? "unknown"} | mimeType=${response?.mimeType || "unknown"} | url=${displayUrl} | headers=${JSON.stringify(safeHeaders)} | fromDiskCache=${Boolean(response?.fromDiskCache)} | fromServiceWorker=${Boolean(response?.fromServiceWorker)}`,
       );
     };
 
     const onMainFrameNavigated = (frame: any) => {
       if (frame === page?.mainFrame()) {
-        logger.warn(
+        logger.debug(
           `Page navigated during Send POST | url=${frame.url()} | lockOwner=${activeCdpPageOperation} | pid=${process.pid}`,
         );
       }
@@ -525,18 +525,18 @@ async function postRedirectedUrlCDPLocked(
           .filter(Boolean),
         bodyText: (document.body?.innerText || "").replace(/\\s+/g, " ").slice(0, 700),
       })).catch((error) => ({ diagnosticError: String(error) }));
-      logger.log(
+      logger.debug(
         `Send POST result | submitted=${postSubmitted} | pageUrl=${safeUrlLabel(page.url())} | capturedUrl=${redirectLocation ? safeUrlLabel(redirectLocation) : "none"} | page=${JSON.stringify(pageDiagnostics)}`,
       );
     }
 
     logger.trace(`off request: ${targetUrl}`);
     if (preferMediaSource && mediaSourceUrl) {
-      logger.log(`Send media source captured | source=${safeUrlLabel(mediaSourceUrl)}`);
+      logger.debug(`Send media source captured | source=${safeUrlLabel(mediaSourceUrl)}`);
       return mediaSourceUrl;
     }
     if (redirectLocation) {
-      logger.log(`redirected (CDP): ${targetUrl} → ${redirectLocation}`);
+      logger.debug(`redirected (CDP): ${targetUrl} → ${redirectLocation}`);
       return redirectLocation;
     }
   } catch (cdpErr) {
@@ -598,7 +598,7 @@ async function getRedirectedUrlCDPLocked(
     const onRequestSent: Handler<any> = (params) => {
       logger.trace(`onRequestSent params ${params.documentURL}`);
       const reqUrl = params.request?.url || "";
-      logger.log(`reqUrl ${reqUrl}`);
+      logger.debug(`reqUrl ${reqUrl}`);
 
       if (reqUrl.startsWith("http") && matchesHost(reqUrl, MKVDRAMA_HOST)) {
         try {
