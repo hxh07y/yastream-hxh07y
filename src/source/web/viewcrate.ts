@@ -477,6 +477,28 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
         const className = $(element).attr("class") || "";
         return className ? `${tag}.${className}` : tag;
       }).get().slice(0, 12);
+      const firstEpisode = $dlcSection.children().first();
+      const firstEpisodeStructure = firstEpisode.find("*").addBack().slice(0, 18).map((_, element) => {
+        const attributes = (element as any).attribs || {};
+        const href = attributes.href ? new URL(attributes.href, VIEWCRATE_ORIGIN) : null;
+        const dataValues = Object.entries(attributes)
+          .filter(([key, value]) => key.startsWith("data-") && typeof value === "string")
+          .map(([key, value]) => {
+            let host = "";
+            try {
+              host = new URL(value as string, VIEWCRATE_ORIGIN).hostname;
+            } catch {}
+            return { key, host: host || undefined, valueType: (value as string).startsWith("http") ? "url" : "text" };
+          });
+        return {
+          tag: (element as any).tagName || "node",
+          className: attributes.class || "",
+          attributeNames: Object.keys(attributes),
+          href: href ? { host: href.hostname, path: href.pathname } : undefined,
+          dataValues,
+          text: $(element).children().length === 0 ? $(element).text().trim().slice(0, 100) : undefined,
+        };
+      }).get();
       const formSummary = $("form").map((_, form) => ({
         action: $(form).attr("action") || "",
         method: ($(form).attr("method") || "get").toLowerCase(),
@@ -502,6 +524,9 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
 
       logger.log(
         `Viewcrate browser page ready | status=${status} | bytes=${Buffer.byteLength(html)} | episodeHosters=${sectionHosters} | documentHosters=${documentHosters} | protectedText=${pageText.toLowerCase().includes("protected content")} | passwordProvided=${Boolean(password)} | forms=${formSummary.length} | sectionPreview=${sectionPreview} | sectionChildren=${JSON.stringify(sectionChildren)} | sectionAttributes=${JSON.stringify(sectionAttributes)} | pageRuntimeState=${JSON.stringify(pageRuntimeState)}`,
+      );
+      logger.log(
+        `Viewcrate first episode DOM structure | elements=${JSON.stringify(firstEpisodeStructure)}`,
       );
       if (pageRuntimeState.protectedContent && sectionHosters === 0) {
         const signals = pageRuntimeState.automationSignals;
