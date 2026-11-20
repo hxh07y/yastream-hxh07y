@@ -486,13 +486,16 @@ async function getViewcrateHtml(url: string, password?: string): Promise<string>
           const spans = $row.find("span").map((_, span) => $(span).text().trim()).get();
           const attributes = Object.entries((button as any).attribs || {}).map(([key, value]) => {
             const text = String(value || "");
+            const isUrl = text.startsWith("http://") || text.startsWith("https://");
             let parsed: URL | null = null;
-            try { parsed = new URL(text, VIEWCRATE_ORIGIN); } catch {}
+            if (isUrl) {
+              try { parsed = new URL(text); } catch {}
+            }
             return {
               key,
               length: text.length,
-              valueType: /^https?:\\/\\//i.test(text) ? "url" : "text",
-              host: parsed && /^https?:$/i.test(parsed.protocol) ? parsed.hostname : undefined,
+              valueType: isUrl ? "url" : "text",
+              host: parsed?.hostname,
               sha256: hashValue(text),
             };
           });
